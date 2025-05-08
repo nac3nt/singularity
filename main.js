@@ -21,7 +21,11 @@ const BLACK_HOLE_DIAMETER = 20;
 const BLACK_HOLE_SEGMENTS = 32;
 const BLACK_HOLE_WORLD_RADIUS = BLACK_HOLE_DIAMETER / 2;
 
-const LENSING_STRENGTH = 0.45;
+// Lensing Effect Configuration
+const LENSING_STRENGTH = 0.55; // Base strength of the lensing
+const LENSING_EFFECT_FALLOFF_SCALE = 1.5; // Scales radius in exp falloff: higher = wider effect
+const LENSING_EFFECT_AMPLITUDE = 2.8;   // Multiplier for the exponential term: higher = stronger peak effect
+const LENSING_MAX_DEFLECTION_SHADER_VAL = 1.5; // Max deflection clamp value used in shader
 
 const GLOW_LAYER_INITIAL_BLUR_KERNEL_SIZE = 256;
 const GLOW_LAYER_INITIAL_INTENSITY = 3.0;
@@ -80,6 +84,9 @@ function createScene() {
     uniform float blackHoleRadius;
     uniform float lensStrength;
     uniform float aspectRatio;
+    uniform float lensEffectFalloffScale; // New uniform
+    uniform float lensEffectAmplitude;   // New uniform
+
     void main(void) {
       vec2 uv = vUV;
       vec2 toCenter = uv - blackHoleCenter;
@@ -87,23 +94,25 @@ function createScene() {
       toCenter.x *= aspectRatio;
       float dist = length(toCenter);
       float r = blackHoleRadius;
-      float rs = r * 0.5; // Schwarzschild radius (approx)
+      float rs = r * 0.5; // Schwarzschild radius (approx for shader scaling)
       float theta = atan(toCenter.y, toCenter.x);
-      float d = dist;
+      // float d = dist; // d is not used, dist is used directly
+
       // Physically accurate Schwarzschild lensing approximation
       float lensingRange = r * 8.0;
-      float maxDeflection = 1.5; // Clamp to avoid over-bending
+      float maxDeflection = ${LENSING_MAX_DEFLECTION_SHADER_VAL.toFixed(1)}; // Clamp to avoid over-bending (using JS const for value)
       float fadeStart = r * 6.0;
       float fade = 1.0;
       if (dist > fadeStart) {
         fade = 1.0 - smoothstep(fadeStart, lensingRange, dist);
       }
       if (dist < lensingRange) {
-        float b = max(dist, 0.0001);
+        float b = max(dist, 0.0001); // Avoid division by zero
         // Schwarzschild deflection: alpha = 4GM/(c^2 b) ~ 2rs/b (in units)
         float alpha = lensStrength * rs / b; // Deflection angle
         alpha = clamp(alpha, -maxDeflection, maxDeflection);
-        float newDist = dist + fade * alpha * exp(-dist / r) * 2.5; // Stronger, but clamped, lensing
+        // Modified deflection application for more control over falloff and amplitude
+        float newDist = dist + fade * alpha * exp(-dist / (r * lensEffectFalloffScale)) * lensEffectAmplitude;
         // Undo aspect ratio correction for uv
         vec2 offset = newDist * vec2(cos(theta), sin(theta));
         offset.x /= aspectRatio;
@@ -143,7 +152,7 @@ function createScene() {
   const lensing = new PostProcess(
     "gravitationalLensing",
     "gravitationalLensing",
-    ["blackHoleCenter", "blackHoleRadius", "lensStrength", "aspectRatio"],
+    ["blackHoleCenter", "blackHoleRadius", "lensStrength", "aspectRatio", "lensEffectFalloffScale", "lensEffectAmplitude"], // Added new uniforms
     null,
     1.0,
     camera
@@ -167,6 +176,8 @@ function createScene() {
     effect.setFloat("blackHoleRadius", normalizedScreenRadius);
     effect.setFloat("lensStrength", LENSING_STRENGTH);
     effect.setFloat("aspectRatio", engine.getRenderWidth() / engine.getRenderHeight());
+    effect.setFloat("lensEffectFalloffScale", LENSING_EFFECT_FALLOFF_SCALE); // Set new uniform
+    effect.setFloat("lensEffectAmplitude", LENSING_EFFECT_AMPLITUDE);     // Set new uniform
   };
 
   // Bloom/Glow effect
