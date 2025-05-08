@@ -1,4 +1,4 @@
-import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, PointLight, LensFlareSystem, LensFlare, PlaneBuilder, HDRCubeTexture, PBRMaterial, CubeTexture, BackgroundMaterial } from 'babylonjs';
+import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, PointLight, LensFlareSystem, LensFlare, PlaneBuilder, HDRCubeTexture, PBRMaterial, CubeTexture, BackgroundMaterial, PostProcess, Matrix, Effect } from 'babylonjs';
 import 'babylonjs-loaders';
 
 const canvas = document.getElementById('renderCanvas');
@@ -25,30 +25,99 @@ function createScene() {
   // Camera
   const camera = new ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.5, 50, Vector3.Zero(), scene);
   camera.attachControl(canvas, true);
+  // Disable zooming (mouse wheel)
+  camera.lowerRadiusLimit = camera.radius;
+  camera.upperRadiusLimit = camera.radius;
 
   // Lighting
   const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), scene);
   hemiLight.intensity = 0.5;
 
-  // Sun (emissive sphere)
-  const sun = MeshBuilder.CreateSphere('sun', { diameter: 10, segments: 32 }, scene);
-  const sunMaterial = new StandardMaterial('sunMat', scene);
-  sunMaterial.emissiveColor = new Color3(1, 0.97, 0.85);
-  sunMaterial.diffuseColor = new Color3(1, 0.97, 0.85);
-  sunMaterial.specularColor = new Color3(1, 1, 1);
-  sun.material = sunMaterial;
+  // Add a black hole (dark sphere) at the origin
+  const blackHole = MeshBuilder.CreateSphere('blackHole', { diameter: 20, segments: 32 }, scene);
+  const blackHoleMaterial = new StandardMaterial('blackHoleMat', scene);
+  blackHoleMaterial.diffuseColor = new Color3(0, 0, 0);
+  blackHoleMaterial.specularColor = new Color3(0, 0, 0);
+  blackHoleMaterial.emissiveColor = new Color3(0, 0, 0);
+  blackHole.material = blackHoleMaterial;
 
-  // PointLight at the sun's position
-  const sunLight = new PointLight('sunLight', new Vector3(0, 0, 0), scene);
-  sunLight.intensity = 2.5;
-  sunLight.diffuse = new Color3(1, 0.97, 0.85);
-  sunLight.specular = new Color3(1, 1, 1);
+  // Gravitational lensing post-process
+  // Accurate lensing using a custom fragment shader
+  Effect.ShadersStore["gravitationalLensingFragmentShader"] = `
+    precision highp float;
+    varying vec2 vUV;
+    uniform sampler2D textureSampler;
+    uniform vec2 blackHoleCenter;
+    uniform float blackHoleRadius;
+    uniform float lensStrength;
+    uniform float aspectRatio;
+    void main(void) {
+      vec2 uv = vUV;
+      vec2 toCenter = uv - blackHoleCenter;
+      // Correct for aspect ratio so the black hole is circular
+      toCenter.x *= aspectRatio;
+      float dist = length(toCenter);
+      float r = blackHoleRadius;
+      float rs = r * 0.5; // Schwarzschild radius (approx)
+      float theta = atan(toCenter.y, toCenter.x);
+      float d = dist;
+      // Physically accurate Schwarzschild lensing approximation
+      float lensingRange = r * 8.0;
+      float maxDeflection = 1.5; // Clamp to avoid over-bending
+      float fadeStart = r * 6.0;
+      float fade = 1.0;
+      if (dist > fadeStart) {
+        fade = 1.0 - smoothstep(fadeStart, lensingRange, dist);
+      }
+      if (dist < lensingRange) {
+        float b = max(dist, 0.0001);
+        // Schwarzschild deflection: alpha = 4GM/(c^2 b) ~ 2rs/b (in units)
+        float alpha = lensStrength * rs / b; // Deflection angle
+        alpha = clamp(alpha, -maxDeflection, maxDeflection);
+        float newDist = dist + fade * alpha * exp(-dist / r) * 2.5; // Stronger, but clamped, lensing
+        // Undo aspect ratio correction for uv
+        vec2 offset = newDist * vec2(cos(theta), sin(theta));
+        offset.x /= aspectRatio;
+        uv = blackHoleCenter + offset;
+      }
+      // Hard black hole shadow (event horizon)
+      if (dist < r) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+      // Only lensing: no artificial glow color, just the lensed background
+      vec4 bg = texture2D(textureSampler, uv);
+      gl_FragColor = bg;
+    }
+  `;
 
-  // Lens flare system (use a simple color instead of a texture)
-  const lensFlareSystem = new LensFlareSystem('sunFlare', sunLight, scene);
-  new LensFlare(1.0, 0, new Color3(1, 0.97, 0.85), null, lensFlareSystem);
-  new LensFlare(0.5, 0.2, new Color3(1, 1, 1), null, lensFlareSystem);
-  new LensFlare(0.2, 0.5, new Color3(1, 0.8, 0.3), null, lensFlareSystem);
+  const blackHoleScreenPos = () => {
+    // Project black hole position to screen space
+    const bhPos = blackHole.position;
+    const projected = Vector3.Project(
+      bhPos,
+      Matrix.Identity(),
+      scene.getTransformMatrix(),
+      camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
+    );
+    return { x: projected.x / engine.getRenderWidth(), y: 1.0 - projected.y / engine.getRenderHeight() };
+  };
+
+  const lensing = new PostProcess(
+    "gravitationalLensing",
+    "gravitationalLensing",
+    ["blackHoleCenter", "blackHoleRadius", "lensStrength", "aspectRatio"],
+    null,
+    1.0,
+    camera
+  );
+  lensing.onApply = function(effect) {
+    const center = blackHoleScreenPos();
+    effect.setFloat2("blackHoleCenter", center.x, center.y);
+    effect.setFloat("blackHoleRadius", 0.14); // Increased for larger black hole
+    effect.setFloat("lensStrength", 0.45); // Stronger lensing
+    effect.setFloat("aspectRatio", engine.getRenderWidth() / engine.getRenderHeight());
+  };
 
   // Bloom/Glow effect
   const glowLayer = new GlowLayer('glow', scene, { blurKernelSize: 256 });
