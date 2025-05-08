@@ -1,29 +1,58 @@
-import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, PointLight, LensFlareSystem, LensFlare, PlaneBuilder, HDRCubeTexture, PBRMaterial, CubeTexture, BackgroundMaterial, PostProcess, Matrix, Effect } from 'babylonjs';
+import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, HDRCubeTexture, BackgroundMaterial, PostProcess, Matrix, Effect } from 'babylonjs';
 import 'babylonjs-loaders';
 
 const canvas = document.getElementById('renderCanvas');
 const engine = new Engine(canvas, true);
 
+// --- Configuration Constants ---
+const HDR_TEXTURE_PATH = 'models/HDR_subdued_blue_nebulae.hdr';
+const HDR_TEXTURE_SIZE = 2048;
+
+const BACKGROUND_SPHERE_DIAMETER = 2000;
+const BACKGROUND_SPHERE_SEGMENTS = 32;
+
+const CAMERA_ALPHA = Math.PI / 2;
+const CAMERA_BETA = Math.PI / 2.5;
+const CAMERA_INITIAL_RADIUS = 50;
+
+const HEMI_LIGHT_INTENSITY = 0.5;
+
+const BLACK_HOLE_DIAMETER = 20;
+const BLACK_HOLE_SEGMENTS = 32;
+const BLACK_HOLE_WORLD_RADIUS = BLACK_HOLE_DIAMETER / 2;
+
+const LENSING_STRENGTH = 0.45;
+
+const GLOW_LAYER_INITIAL_BLUR_KERNEL_SIZE = 256;
+const GLOW_LAYER_INITIAL_INTENSITY = 3.0;
+const GLOW_ANIM_SPEED = 0.00015;
+const GLOW_ANIM_INTENSITY_BASE = GLOW_LAYER_INITIAL_INTENSITY;
+const GLOW_ANIM_INTENSITY_AMP = 0.3;
+const GLOW_ANIM_BLUR_BASE = 238;
+const GLOW_ANIM_BLUR_AMP = 18;
+const GLOW_ANIM_BLUR_PHASE_OFFSET = 1.5;
+// --- End Configuration Constants ---
+
 function createScene() {
   const scene = new Scene(engine);
 
   // 1. Load HDR environment texture for lighting
-  const hdrTexture = new HDRCubeTexture('models/HDR_subdued_blue_nebulae.hdr', scene, 2048);
+  const hdrTexture = new HDRCubeTexture(HDR_TEXTURE_PATH, scene, HDR_TEXTURE_SIZE);
   scene.environmentTexture = hdrTexture;
 
   // 2. Create a seamless equirectangular HDRI background
   const backgroundMaterial = new BackgroundMaterial('backgroundMaterial', scene);
   backgroundMaterial.backFaceCulling = false;
-  backgroundMaterial.reflectionTexture = new Texture('models/HDR_subdued_blue_nebulae.hdr', scene, false, false, Texture.BILINEAR_SAMPLINGMODE, null, null, undefined, true); // isHDR = true
+  backgroundMaterial.reflectionTexture = new Texture(HDR_TEXTURE_PATH, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, null, null, undefined, true); // isHDR = true
   backgroundMaterial.reflectionTexture.coordinatesMode = Texture.FIXED_EQUIRECTANGULAR_MODE;
 
-  const backgroundSphere = MeshBuilder.CreateSphere('backgroundSphere', { segments: 32, diameter: 2000 }, scene);
+  const backgroundSphere = MeshBuilder.CreateSphere('backgroundSphere', { segments: BACKGROUND_SPHERE_SEGMENTS, diameter: BACKGROUND_SPHERE_DIAMETER }, scene);
   backgroundSphere.material = backgroundMaterial;
   backgroundSphere.infiniteDistance = true;
   backgroundSphere.isPickable = false;
 
   // Camera
-  const camera = new ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.5, 50, Vector3.Zero(), scene);
+  const camera = new ArcRotateCamera('camera', CAMERA_ALPHA, CAMERA_BETA, CAMERA_INITIAL_RADIUS, Vector3.Zero(), scene);
   camera.attachControl(canvas, true);
   // Disable zooming (mouse wheel)
   camera.lowerRadiusLimit = camera.radius;
@@ -31,10 +60,10 @@ function createScene() {
 
   // Lighting
   const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), scene);
-  hemiLight.intensity = 0.5;
+  hemiLight.intensity = HEMI_LIGHT_INTENSITY;
 
   // Add a black hole (dark sphere) at the origin
-  const blackHole = MeshBuilder.CreateSphere('blackHole', { diameter: 20, segments: 32 }, scene);
+  const blackHole = MeshBuilder.CreateSphere('blackHole', { diameter: BLACK_HOLE_DIAMETER, segments: BLACK_HOLE_SEGMENTS }, scene);
   const blackHoleMaterial = new StandardMaterial('blackHoleMat', scene);
   blackHoleMaterial.diffuseColor = new Color3(0, 0, 0);
   blackHoleMaterial.specularColor = new Color3(0, 0, 0);
@@ -81,13 +110,21 @@ function createScene() {
         uv = blackHoleCenter + offset;
       }
       // Hard black hole shadow (event horizon)
-      if (dist < r) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-      }
-      // Only lensing: no artificial glow color, just the lensed background
-      vec4 bg = texture2D(textureSampler, uv);
-      gl_FragColor = bg;
+      // if (dist < r) {
+      //   gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      //   return;
+      // }
+      // vec4 bg = texture2D(textureSampler, uv);
+      // gl_FragColor = bg;
+
+      // Smoother transition for event horizon to reduce aliasing/rings
+      // 'r' is normalized screen radius. 'dist' is in a similar space (Y normalized, X aspect-corrected).
+      // A small delta for the transition width in this normalized space.
+      float transitionDelta = 0.003; // Adjust for desired softness. ~1.5-3% of a typical 'r' value.
+      float shadowMix = smoothstep(r - transitionDelta, r + transitionDelta, dist);
+
+      vec4 backgroundColor = texture2D(textureSampler, uv);
+      gl_FragColor = mix(vec4(0.0, 0.0, 0.0, 1.0), backgroundColor, shadowMix);
     }
   `;
 
@@ -96,7 +133,7 @@ function createScene() {
     const bhPos = blackHole.position;
     const projected = Vector3.Project(
       bhPos,
-      Matrix.Identity(),
+      blackHole.getWorldMatrix(), // Use actual world matrix for robustness
       scene.getTransformMatrix(),
       camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
     );
@@ -114,23 +151,34 @@ function createScene() {
   lensing.onApply = function(effect) {
     const center = blackHoleScreenPos();
     effect.setFloat2("blackHoleCenter", center.x, center.y);
-    effect.setFloat("blackHoleRadius", 0.14); // Increased for larger black hole
-    effect.setFloat("lensStrength", 0.45); // Stronger lensing
+
+    // Calculate normalizedScreenRadius based on angular size for stability during panning.
+    // BLACK_HOLE_WORLD_RADIUS is the actual radius of the black hole in world units.
+    // camera.radius is the distance from the camera to its target (the black hole's center).
+    // camera.fov is the camera's vertical field of view in radians.
+    // The angular radius of the black hole as seen by the camera:
+    const angularRadius = Math.atan(BLACK_HOLE_WORLD_RADIUS / camera.radius);
+
+    // The shader's `blackHoleRadius` (our `normalizedScreenRadius`) should be the
+    // black hole's radius as a fraction of the screen height.
+    // If angular diameter = fov, normalized radius = 0.5. So, angular radius / fov.
+    const normalizedScreenRadius = angularRadius / camera.fov;
+
+    effect.setFloat("blackHoleRadius", normalizedScreenRadius);
+    effect.setFloat("lensStrength", LENSING_STRENGTH);
     effect.setFloat("aspectRatio", engine.getRenderWidth() / engine.getRenderHeight());
   };
 
   // Bloom/Glow effect
-  const glowLayer = new GlowLayer('glow', scene, { blurKernelSize: 256 });
-  glowLayer.intensity = 3.0;
+  const glowLayer = new GlowLayer('glow', scene, { blurKernelSize: GLOW_LAYER_INITIAL_BLUR_KERNEL_SIZE });
+  glowLayer.intensity = GLOW_LAYER_INITIAL_INTENSITY;
 
   // Animate the glow for a living sun effect
   let glowTime = 0;
   scene.registerBeforeRender(() => {
-    glowTime += engine.getDeltaTime() * 0.00015; // Slow animation
-    // Subtle sine wave for intensity (range: 2.7 - 3.3)
-    glowLayer.intensity = 3.0 + 0.3 * Math.sin(glowTime);
-    // Optional: Subtle sine wave for blur (range: 220 - 256)
-    const blur = 238 + 18 * Math.sin(glowTime + 1.5); // phase offset
+    glowTime += engine.getDeltaTime() * GLOW_ANIM_SPEED;
+    glowLayer.intensity = GLOW_ANIM_INTENSITY_BASE + GLOW_ANIM_INTENSITY_AMP * Math.sin(glowTime);
+    const blur = GLOW_ANIM_BLUR_BASE + GLOW_ANIM_BLUR_AMP * Math.sin(glowTime + GLOW_ANIM_BLUR_PHASE_OFFSET);
     if (glowLayer.blurKernelSize !== Math.round(blur)) {
       glowLayer.blurKernelSize = Math.round(blur);
     }
