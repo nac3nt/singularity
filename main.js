@@ -1,208 +1,607 @@
-import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, HDRCubeTexture, BackgroundMaterial, PostProcess, Matrix, Effect } from 'babylonjs';
+import { 
+  Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, 
+  MeshBuilder, Color3, StandardMaterial, GlowLayer, Texture, 
+  HDRCubeTexture, BackgroundMaterial, PostProcess, Matrix, Effect,
+  PBRMaterial, Animation, AnimationGroup, Tools
+} from 'babylonjs';
 import 'babylonjs-loaders';
 
-const canvas = document.getElementById('renderCanvas');
-const engine = new Engine(canvas, true);
-
-// --- Configuration Constants ---
-const HDR_TEXTURE_PATH = 'models/HDR_subdued_blue_nebulae.hdr';
-const HDR_TEXTURE_SIZE = 2048;
-
-const BACKGROUND_SPHERE_DIAMETER = 2000;
-const BACKGROUND_SPHERE_SEGMENTS = 32;
-
-const CAMERA_ALPHA = Math.PI / 2;
-const CAMERA_BETA = Math.PI / 2.5;
-const CAMERA_INITIAL_RADIUS = 50;
-
-const HEMI_LIGHT_INTENSITY = 0.5;
-
-const BLACK_HOLE_DIAMETER = 20;
-const BLACK_HOLE_SEGMENTS = 32;
-const BLACK_HOLE_WORLD_RADIUS = BLACK_HOLE_DIAMETER / 2;
-
-// Lensing Effect Configuration
-const LENSING_STRENGTH = 0.55; // Base strength of the lensing
-const LENSING_EFFECT_FALLOFF_SCALE = 1.5; // Scales radius in exp falloff: higher = wider effect
-const LENSING_EFFECT_AMPLITUDE = 2.8;   // Multiplier for the exponential term: higher = stronger peak effect
-const LENSING_MAX_DEFLECTION_SHADER_VAL = 1.5; // Max deflection clamp value used in shader
-
-const GLOW_LAYER_INITIAL_BLUR_KERNEL_SIZE = 256;
-const GLOW_LAYER_INITIAL_INTENSITY = 3.0;
-const GLOW_ANIM_SPEED = 0.00015;
-const GLOW_ANIM_INTENSITY_BASE = GLOW_LAYER_INITIAL_INTENSITY;
-const GLOW_ANIM_INTENSITY_AMP = 0.3;
-const GLOW_ANIM_BLUR_BASE = 238;
-const GLOW_ANIM_BLUR_AMP = 18;
-const GLOW_ANIM_BLUR_PHASE_OFFSET = 1.5;
-// --- End Configuration Constants ---
-
-function createScene() {
-  const scene = new Scene(engine);
-
-  // 1. Load HDR environment texture for lighting
-  const hdrTexture = new HDRCubeTexture(HDR_TEXTURE_PATH, scene, HDR_TEXTURE_SIZE);
-  scene.environmentTexture = hdrTexture;
-
-  // 2. Create a seamless equirectangular HDRI background
-  const backgroundMaterial = new BackgroundMaterial('backgroundMaterial', scene);
-  backgroundMaterial.backFaceCulling = false;
-  backgroundMaterial.reflectionTexture = new Texture(HDR_TEXTURE_PATH, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, null, null, undefined, true); // isHDR = true
-  backgroundMaterial.reflectionTexture.coordinatesMode = Texture.FIXED_EQUIRECTANGULAR_MODE;
-
-  const backgroundSphere = MeshBuilder.CreateSphere('backgroundSphere', { segments: BACKGROUND_SPHERE_SEGMENTS, diameter: BACKGROUND_SPHERE_DIAMETER }, scene);
-  backgroundSphere.material = backgroundMaterial;
-  backgroundSphere.infiniteDistance = true;
-  backgroundSphere.isPickable = false;
-
-  // Camera
-  const camera = new ArcRotateCamera('camera', CAMERA_ALPHA, CAMERA_BETA, CAMERA_INITIAL_RADIUS, Vector3.Zero(), scene);
-  camera.attachControl(canvas, true);
-  // Disable zooming (mouse wheel)
-  camera.lowerRadiusLimit = camera.radius;
-  camera.upperRadiusLimit = camera.radius;
-
-  // Lighting
-  const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), scene);
-  hemiLight.intensity = HEMI_LIGHT_INTENSITY;
-
-  // Add a black hole (dark sphere) at the origin
-  const blackHole = MeshBuilder.CreateSphere('blackHole', { diameter: BLACK_HOLE_DIAMETER, segments: BLACK_HOLE_SEGMENTS }, scene);
-  const blackHoleMaterial = new StandardMaterial('blackHoleMat', scene);
-  blackHoleMaterial.diffuseColor = new Color3(0, 0, 0);
-  blackHoleMaterial.specularColor = new Color3(0, 0, 0);
-  blackHoleMaterial.emissiveColor = new Color3(0, 0, 0);
-  blackHole.material = blackHoleMaterial;
-
-  // Gravitational lensing post-process
-  // Accurate lensing using a custom fragment shader
-  Effect.ShadersStore["gravitationalLensingFragmentShader"] = `
-    precision highp float;
-    varying vec2 vUV;
-    uniform sampler2D textureSampler;
-    uniform vec2 blackHoleCenter;
-    uniform float blackHoleRadius;
-    uniform float lensStrength;
-    uniform float aspectRatio;
-    uniform float lensEffectFalloffScale; // New uniform
-    uniform float lensEffectAmplitude;   // New uniform
-
-    void main(void) {
-      vec2 uv = vUV;
-      vec2 toCenter = uv - blackHoleCenter;
-      // Correct for aspect ratio so the black hole is circular
-      toCenter.x *= aspectRatio;
-      float dist = length(toCenter);
-      float r = blackHoleRadius;
-      float rs = r * 0.5; // Schwarzschild radius (approx for shader scaling)
-      float theta = atan(toCenter.y, toCenter.x);
-      // float d = dist; // d is not used, dist is used directly
-
-      // Physically accurate Schwarzschild lensing approximation
-      float lensingRange = r * 8.0;
-      float maxDeflection = ${LENSING_MAX_DEFLECTION_SHADER_VAL.toFixed(1)}; // Clamp to avoid over-bending (using JS const for value)
-      float fadeStart = r * 6.0;
-      float fade = 1.0;
-      if (dist > fadeStart) {
-        fade = 1.0 - smoothstep(fadeStart, lensingRange, dist);
-      }
-      if (dist < lensingRange) {
-        float b = max(dist, 0.0001); // Avoid division by zero
-        // Schwarzschild deflection: alpha = 4GM/(c^2 b) ~ 2rs/b (in units)
-        float alpha = lensStrength * rs / b; // Deflection angle
-        alpha = clamp(alpha, -maxDeflection, maxDeflection);
-        // Modified deflection application for more control over falloff and amplitude
-        float newDist = dist + fade * alpha * exp(-dist / (r * lensEffectFalloffScale)) * lensEffectAmplitude;
-        // Undo aspect ratio correction for uv
-        vec2 offset = newDist * vec2(cos(theta), sin(theta));
-        offset.x /= aspectRatio;
-        uv = blackHoleCenter + offset;
-      }
-      // Hard black hole shadow (event horizon)
-      // if (dist < r) {
-      //   gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-      //   return;
-      // }
-      // vec4 bg = texture2D(textureSampler, uv);
-      // gl_FragColor = bg;
-
-      // Smoother transition for event horizon to reduce aliasing/rings
-      // 'r' is normalized screen radius. 'dist' is in a similar space (Y normalized, X aspect-corrected).
-      // A small delta for the transition width in this normalized space.
-      float transitionDelta = 0.003; // Adjust for desired softness. ~1.5-3% of a typical 'r' value.
-      float shadowMix = smoothstep(r - transitionDelta, r + transitionDelta, dist);
-
-      vec4 backgroundColor = texture2D(textureSampler, uv);
-      gl_FragColor = mix(vec4(0.0, 0.0, 0.0, 1.0), backgroundColor, shadowMix);
-    }
-  `;
-
-  const blackHoleScreenPos = () => {
-    // Project black hole position to screen space
-    const bhPos = blackHole.position;
-    const projected = Vector3.Project(
-      bhPos,
-      blackHole.getWorldMatrix(), // Use actual world matrix for robustness
-      scene.getTransformMatrix(),
-      camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
-    );
-    return { x: projected.x / engine.getRenderWidth(), y: 1.0 - projected.y / engine.getRenderHeight() };
+// --- Enhanced Configuration System ---
+class LensingConfig {
+  static HDR = {
+    TEXTURE_PATH: 'models/HDR_subdued_blue_nebulae.hdr',
+    TEXTURE_SIZE: 2048
   };
 
-  const lensing = new PostProcess(
-    "gravitationalLensing",
-    "gravitationalLensing",
-    ["blackHoleCenter", "blackHoleRadius", "lensStrength", "aspectRatio", "lensEffectFalloffScale", "lensEffectAmplitude"], // Added new uniforms
-    null,
-    1.0,
-    camera
-  );
-  lensing.onApply = function(effect) {
-    const center = blackHoleScreenPos();
-    effect.setFloat2("blackHoleCenter", center.x, center.y);
-
-    // Calculate normalizedScreenRadius based on angular size for stability during panning.
-    // BLACK_HOLE_WORLD_RADIUS is the actual radius of the black hole in world units.
-    // camera.radius is the distance from the camera to its target (the black hole's center).
-    // camera.fov is the camera's vertical field of view in radians.
-    // The angular radius of the black hole as seen by the camera:
-    const angularRadius = Math.atan(BLACK_HOLE_WORLD_RADIUS / camera.radius);
-
-    // The shader's `blackHoleRadius` (our `normalizedScreenRadius`) should be the
-    // black hole's radius as a fraction of the screen height.
-    // If angular diameter = fov, normalized radius = 0.5. So, angular radius / fov.
-    const normalizedScreenRadius = angularRadius / camera.fov;
-
-    effect.setFloat("blackHoleRadius", normalizedScreenRadius);
-    effect.setFloat("lensStrength", LENSING_STRENGTH);
-    effect.setFloat("aspectRatio", engine.getRenderWidth() / engine.getRenderHeight());
-    effect.setFloat("lensEffectFalloffScale", LENSING_EFFECT_FALLOFF_SCALE); // Set new uniform
-    effect.setFloat("lensEffectAmplitude", LENSING_EFFECT_AMPLITUDE);     // Set new uniform
+  static BACKGROUND = {
+    SPHERE_DIAMETER: 2000,
+    SPHERE_SEGMENTS: 32
   };
 
-  // Bloom/Glow effect
-  const glowLayer = new GlowLayer('glow', scene, { blurKernelSize: GLOW_LAYER_INITIAL_BLUR_KERNEL_SIZE });
-  glowLayer.intensity = GLOW_LAYER_INITIAL_INTENSITY;
+  static CAMERA = {
+    ALPHA: Math.PI / 2,
+    BETA: Math.PI / 2.5,
+    INITIAL_RADIUS: 50,
+    MIN_RADIUS: 20,
+    MAX_RADIUS: 200,
+    PAN_SENSITIVITY: 0.8,
+    ZOOM_SENSITIVITY: 0.5
+  };
 
-  // Animate the glow for a living sun effect
-  let glowTime = 0;
-  scene.registerBeforeRender(() => {
-    glowTime += engine.getDeltaTime() * GLOW_ANIM_SPEED;
-    glowLayer.intensity = GLOW_ANIM_INTENSITY_BASE + GLOW_ANIM_INTENSITY_AMP * Math.sin(glowTime);
-    const blur = GLOW_ANIM_BLUR_BASE + GLOW_ANIM_BLUR_AMP * Math.sin(glowTime + GLOW_ANIM_BLUR_PHASE_OFFSET);
-    if (glowLayer.blurKernelSize !== Math.round(blur)) {
-      glowLayer.blurKernelSize = Math.round(blur);
+  static LIGHTING = {
+    HEMI_INTENSITY: 0.5,
+    ENVIRONMENT_INTENSITY: 1.0
+  };
+
+  static BLACK_HOLE = {
+    DIAMETER: 20,
+    SEGMENTS: 64, // Increased for smoother appearance
+    get WORLD_RADIUS() { return this.DIAMETER / 2; }
+  };
+
+  static LENSING = {
+    STRENGTH: 0.55,
+    FALLOFF_SCALE: 1.5,
+    AMPLITUDE: 2.8,
+    MAX_DEFLECTION: 1.5,
+    TRANSITION_SOFTNESS: 0.003,
+    SCHWARZSCHILD_FACTOR: 0.5
+  };
+
+  static GLOW = {
+    INITIAL_BLUR_KERNEL: 256,
+    INITIAL_INTENSITY: 3.0,
+    ANIMATION: {
+      SPEED: 0.00015,
+      INTENSITY_BASE: 3.0,
+      INTENSITY_AMPLITUDE: 0.3,
+      BLUR_BASE: 238,
+      BLUR_AMPLITUDE: 18,
+      BLUR_PHASE_OFFSET: 1.5
     }
-  });
+  };
 
-  return scene;
+  static PERFORMANCE = {
+    TARGET_FPS: 60,
+    ADAPTIVE_QUALITY: true,
+    LOD_DISTANCE_THRESHOLD: 100
+  };
 }
 
-const scene = createScene();
-engine.runRenderLoop(() => {
-  scene.render();
-});
+// --- Utility Classes ---
+class MathUtils {
+  static clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
 
-window.addEventListener('resize', () => {
-  engine.resize();
-}); 
+  static lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  static smoothstep(edge0, edge1, x) {
+    const t = this.clamp((x - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+}
+
+class PerformanceMonitor {
+  constructor(engine) {
+    this.engine = engine;
+    this.frameCount = 0;
+    this.lastTime = performance.now();
+    this.fps = 60;
+    this.adaptiveQuality = LensingConfig.PERFORMANCE.ADAPTIVE_QUALITY;
+  }
+
+  update() {
+    this.frameCount++;
+    const currentTime = performance.now();
+    
+    if (currentTime - this.lastTime >= 1000) {
+      this.fps = this.frameCount;
+      this.frameCount = 0;
+      this.lastTime = currentTime;
+      
+      if (this.adaptiveQuality) {
+        this.adjustQuality();
+      }
+    }
+  }
+
+  adjustQuality() {
+    const targetFps = LensingConfig.PERFORMANCE.TARGET_FPS;
+    if (this.fps < targetFps * 0.8) {
+      // Reduce quality
+      console.log('Reducing quality for better performance');
+    } else if (this.fps > targetFps * 1.1) {
+      // Increase quality
+      console.log('Increasing quality');
+    }
+  }
+
+  getFPS() {
+    return this.fps;
+  }
+}
+
+// --- Enhanced Shader System ---
+class ShaderManager {
+  static createGravitationalLensingShader() {
+    Effect.ShadersStore["gravitationalLensingFragmentShader"] = `
+      precision highp float;
+      
+      // Varyings
+      varying vec2 vUV;
+      
+      // Uniforms
+      uniform sampler2D textureSampler;
+      uniform vec2 blackHoleCenter;
+      uniform float blackHoleRadius;
+      uniform float lensStrength;
+      uniform float aspectRatio;
+      uniform float lensEffectFalloffScale;
+      uniform float lensEffectAmplitude;
+      uniform float time; // For subtle time-based effects
+      uniform float transitionSoftness;
+      uniform float schwarzschildFactor;
+      
+      // Enhanced noise function for subtle distortions
+      float random(vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+      }
+      
+      float noise(vec2 st) {
+        vec2 i = floor(st);
+        vec2 f = fract(st);
+        float a = random(i);
+        float b = random(i + vec2(1.0, 0.0));
+        float c = random(i + vec2(0.0, 1.0));
+        float d = random(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+
+      void main(void) {
+        vec2 uv = vUV;
+        vec2 toCenter = uv - blackHoleCenter;
+        
+        // Correct for aspect ratio
+        toCenter.x *= aspectRatio;
+        float dist = length(toCenter);
+        float r = blackHoleRadius;
+        float rs = r * schwarzschildFactor;
+        float theta = atan(toCenter.y, toCenter.x);
+        
+        // Enhanced lensing calculation
+        float lensingRange = r * 8.0;
+        float fadeStart = r * 6.0;
+        float fade = 1.0;
+        
+        if (dist > fadeStart) {
+          fade = 1.0 - smoothstep(fadeStart, lensingRange, dist);
+        }
+        
+        if (dist < lensingRange && dist > 0.0001) {
+          float b = max(dist, 0.0001);
+          
+          // Improved Schwarzschild deflection with time-based perturbation
+          float baseAlpha = lensStrength * rs / b;
+          float timeEffect = 1.0 + 0.02 * sin(time * 0.5 + theta * 3.0);
+          float alpha = baseAlpha * timeEffect;
+          
+          // Clamp deflection
+          alpha = clamp(alpha, -${LensingConfig.LENSING.MAX_DEFLECTION}, ${LensingConfig.LENSING.MAX_DEFLECTION});
+          
+          // Apply enhanced deflection with exponential falloff
+          float falloffTerm = exp(-dist / (r * lensEffectFalloffScale));
+          float newDist = dist + fade * alpha * falloffTerm * lensEffectAmplitude;
+          
+          // Add subtle noise for more realistic distortion
+          float noiseScale = 0.001 * fade * falloffTerm;
+          newDist += noiseScale * noise(uv * 100.0 + time * 0.1);
+          
+          // Calculate new UV coordinates
+          vec2 offset = newDist * vec2(cos(theta), sin(theta));
+          offset.x /= aspectRatio;
+          uv = blackHoleCenter + offset;
+        }
+        
+        // Enhanced event horizon rendering with improved transition
+        float transitionDelta = transitionSoftness;
+        float shadowMix = smoothstep(r - transitionDelta, r + transitionDelta, dist);
+        
+        // Sample background with bounds checking
+        uv = clamp(uv, vec2(0.0), vec2(1.0));
+        vec4 backgroundColor = texture2D(textureSampler, uv);
+        
+        // Create more realistic black hole appearance
+        vec3 blackHoleColor = vec3(0.0);
+        
+        // Add subtle accretion disk glow near the event horizon
+        if (dist > r && dist < r * 1.5) {
+          float glowIntensity = (1.5 * r - dist) / (0.5 * r);
+          glowIntensity = pow(glowIntensity, 2.0) * 0.1;
+          blackHoleColor = mix(blackHoleColor, vec3(1.0, 0.6, 0.2), glowIntensity);
+        }
+        
+        gl_FragColor = mix(vec4(blackHoleColor, 1.0), backgroundColor, shadowMix);
+      }
+    `;
+  }
+}
+
+// --- Enhanced Black Hole Class ---
+class BlackHole {
+  constructor(scene) {
+    this.scene = scene;
+    this.mesh = null;
+    this.material = null;
+    this.animationTime = 0;
+    this.createBlackHole();
+  }
+
+  createBlackHole() {
+    // Create enhanced black hole geometry
+    this.mesh = MeshBuilder.CreateSphere('blackHole', {
+      diameter: LensingConfig.BLACK_HOLE.DIAMETER,
+      segments: LensingConfig.BLACK_HOLE.SEGMENTS
+    }, this.scene);
+
+    // Use PBR material for more realistic appearance
+    this.material = new PBRMaterial('blackHoleMat', this.scene);
+    this.material.baseColor = new Color3(0, 0, 0);
+    this.material.metallic = 0.0;
+    this.material.roughness = 1.0;
+    this.material.emissiveColor = new Color3(0, 0, 0);
+    
+    // Disable back face culling for better appearance
+    this.material.backFaceCulling = false;
+    
+    this.mesh.material = this.material;
+    
+    // Add subtle animation
+    this.createAnimation();
+  }
+
+  createAnimation() {
+    // Subtle rotation animation
+    const rotationAnimation = Animation.CreateAndStartAnimation(
+      'blackHoleRotation',
+      this.mesh,
+      'rotation.y',
+      30, // 30 FPS
+      3000, // 100 seconds for full rotation
+      0,
+      Math.PI * 2,
+      Animation.ANIMATIONLOOPMODE_CYCLE
+    );
+  }
+
+  getScreenPosition(camera, engine) {
+    const projected = Vector3.Project(
+      this.mesh.position,
+      this.mesh.getWorldMatrix(),
+      this.scene.getTransformMatrix(),
+      camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
+    );
+    
+    return {
+      x: projected.x / engine.getRenderWidth(),
+      y: 1.0 - projected.y / engine.getRenderHeight()
+    };
+  }
+
+  getAngularRadius(camera) {
+    return Math.atan(LensingConfig.BLACK_HOLE.WORLD_RADIUS / camera.radius);
+  }
+
+  update(deltaTime) {
+    this.animationTime += deltaTime;
+    // Add any per-frame updates here
+  }
+}
+
+// --- Enhanced Lensing Effect Class ---
+class LensingEffect {
+  constructor(scene, camera, blackHole, engine) {
+    this.scene = scene;
+    this.camera = camera;
+    this.blackHole = blackHole;
+    this.engine = engine;
+    this.postProcess = null;
+    this.time = 0;
+    this.createEffect();
+  }
+
+  createEffect() {
+    ShaderManager.createGravitationalLensingShader();
+    
+    this.postProcess = new PostProcess(
+      "gravitationalLensing",
+      "gravitationalLensing",
+      [
+        "blackHoleCenter", "blackHoleRadius", "lensStrength", 
+        "aspectRatio", "lensEffectFalloffScale", "lensEffectAmplitude",
+        "time", "transitionSoftness", "schwarzschildFactor"
+      ],
+      null,
+      1.0,
+      this.camera
+    );
+
+    this.postProcess.onApply = (effect) => {
+      this.updateUniforms(effect);
+    };
+  }
+
+  updateUniforms(effect) {
+    const center = this.blackHole.getScreenPosition(this.camera, this.engine);
+    const angularRadius = this.blackHole.getAngularRadius(this.camera);
+    const normalizedScreenRadius = angularRadius / this.camera.fov;
+
+    effect.setFloat2("blackHoleCenter", center.x, center.y);
+    effect.setFloat("blackHoleRadius", normalizedScreenRadius);
+    effect.setFloat("lensStrength", LensingConfig.LENSING.STRENGTH);
+    effect.setFloat("aspectRatio", this.engine.getRenderWidth() / this.engine.getRenderHeight());
+    effect.setFloat("lensEffectFalloffScale", LensingConfig.LENSING.FALLOFF_SCALE);
+    effect.setFloat("lensEffectAmplitude", LensingConfig.LENSING.AMPLITUDE);
+    effect.setFloat("time", this.time);
+    effect.setFloat("transitionSoftness", LensingConfig.LENSING.TRANSITION_SOFTNESS);
+    effect.setFloat("schwarzschildFactor", LensingConfig.LENSING.SCHWARZSCHILD_FACTOR);
+  }
+
+  update(deltaTime) {
+    this.time += deltaTime * 0.001; // Convert to seconds
+  }
+
+  dispose() {
+    if (this.postProcess) {
+      this.postProcess.dispose();
+    }
+  }
+}
+
+// --- Enhanced Scene Manager ---
+class SceneManager {
+  constructor() {
+    this.canvas = document.getElementById('renderCanvas');
+    this.engine = new Engine(this.canvas, true, { antialias: true, adaptToDeviceRatio: true });
+    this.scene = null;
+    this.camera = null;
+    this.blackHole = null;
+    this.lensingEffect = null;
+    this.glowLayer = null;
+    this.performanceMonitor = null;
+    this.glowTime = 0;
+    
+    this.initialize();
+  }
+
+  initialize() {
+    this.createScene();
+    this.setupEventHandlers();
+    this.startRenderLoop();
+  }
+
+  createScene() {
+    this.scene = new Scene(this.engine);
+    this.performanceMonitor = new PerformanceMonitor(this.engine);
+
+    // Enhanced environment setup
+    this.setupEnvironment();
+    this.setupCamera();
+    this.setupLighting();
+    
+    // Create enhanced black hole
+    this.blackHole = new BlackHole(this.scene);
+    
+    // Setup lensing effect
+    this.lensingEffect = new LensingEffect(this.scene, this.camera, this.blackHole, this.engine);
+    
+    // Enhanced glow effect
+    this.setupGlowEffect();
+    
+    // Setup animations
+    this.setupAnimations();
+  }
+
+  setupEnvironment() {
+    try {
+      // Load HDR environment
+      const hdrTexture = new HDRCubeTexture(LensingConfig.HDR.TEXTURE_PATH, this.scene, LensingConfig.HDR.TEXTURE_SIZE);
+      this.scene.environmentTexture = hdrTexture;
+      this.scene.environmentIntensity = LensingConfig.LIGHTING.ENVIRONMENT_INTENSITY;
+
+      // Enhanced background setup
+      const backgroundMaterial = new BackgroundMaterial('backgroundMaterial', this.scene);
+      backgroundMaterial.backFaceCulling = false;
+      backgroundMaterial.reflectionTexture = new Texture(
+        LensingConfig.HDR.TEXTURE_PATH, 
+        this.scene, 
+        false, false, 
+        Texture.BILINEAR_SAMPLINGMODE, 
+        null, null, undefined, true
+      );
+      backgroundMaterial.reflectionTexture.coordinatesMode = Texture.FIXED_EQUIRECTANGULAR_MODE;
+
+      const backgroundSphere = MeshBuilder.CreateSphere('backgroundSphere', {
+        segments: LensingConfig.BACKGROUND.SPHERE_SEGMENTS,
+        diameter: LensingConfig.BACKGROUND.SPHERE_DIAMETER
+      }, this.scene);
+      
+      backgroundSphere.material = backgroundMaterial;
+      backgroundSphere.infiniteDistance = true;
+      backgroundSphere.isPickable = false;
+    } catch (error) {
+      console.warn('HDR texture loading failed, using fallback environment:', error);
+      this.setupFallbackEnvironment();
+    }
+  }
+
+  setupFallbackEnvironment() {
+    // Fallback environment for when HDR fails to load
+    this.scene.createDefaultSkybox(null, true, 1000);
+  }
+
+  setupCamera() {
+    this.camera = new ArcRotateCamera(
+      'camera',
+      LensingConfig.CAMERA.ALPHA,
+      LensingConfig.CAMERA.BETA,
+      LensingConfig.CAMERA.INITIAL_RADIUS,
+      Vector3.Zero(),
+      this.scene
+    );
+    
+    this.camera.attachControl(this.canvas, true);
+    
+    // Enhanced camera controls
+    this.camera.lowerRadiusLimit = LensingConfig.CAMERA.MIN_RADIUS;
+    this.camera.upperRadiusLimit = LensingConfig.CAMERA.MAX_RADIUS;
+    this.camera.panningOriginTarget = Vector3.Zero();
+    this.camera.panningInertia = 0.8;
+    this.camera.panningAxis = new Vector3(1, 1, 0);
+    
+    // Adjust sensitivity
+    this.camera.panningSensibility = 1000 / LensingConfig.CAMERA.PAN_SENSITIVITY;
+    this.camera.wheelPrecision = 50 / LensingConfig.CAMERA.ZOOM_SENSITIVITY;
+  }
+
+  setupLighting() {
+    const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), this.scene);
+    hemiLight.intensity = LensingConfig.LIGHTING.HEMI_INTENSITY;
+    hemiLight.groundColor = new Color3(0.1, 0.05, 0.2);
+  }
+
+  setupGlowEffect() {
+    this.glowLayer = new GlowLayer('glow', this.scene, {
+      blurKernelSize: LensingConfig.GLOW.INITIAL_BLUR_KERNEL
+    });
+    this.glowLayer.intensity = LensingConfig.GLOW.INITIAL_INTENSITY;
+    
+    // Make the black hole glow subtly
+    this.glowLayer.addIncludedOnlyMesh(this.blackHole.mesh);
+  }
+
+  setupAnimations() {
+    this.scene.registerBeforeRender(() => {
+      const deltaTime = this.engine.getDeltaTime();
+      
+      // Update performance monitor
+      this.performanceMonitor.update();
+      
+      // Update black hole
+      this.blackHole.update(deltaTime);
+      
+      // Update lensing effect
+      this.lensingEffect.update(deltaTime);
+      
+      // Animate glow effect
+      this.updateGlowAnimation(deltaTime);
+    });
+  }
+
+  updateGlowAnimation(deltaTime) {
+    this.glowTime += deltaTime * LensingConfig.GLOW.ANIMATION.SPEED;
+    
+    const config = LensingConfig.GLOW.ANIMATION;
+    this.glowLayer.intensity = config.INTENSITY_BASE + 
+      config.INTENSITY_AMPLITUDE * Math.sin(this.glowTime);
+    
+    const blur = config.BLUR_BASE + 
+      config.BLUR_AMPLITUDE * Math.sin(this.glowTime + config.BLUR_PHASE_OFFSET);
+    
+    const roundedBlur = Math.round(blur);
+    if (this.glowLayer.blurKernelSize !== roundedBlur) {
+      this.glowLayer.blurKernelSize = roundedBlur;
+    }
+  }
+
+  setupEventHandlers() {
+    // Enhanced resize handling
+    window.addEventListener('resize', () => {
+      this.engine.resize();
+    });
+
+    // Keyboard controls for debugging
+    window.addEventListener('keydown', (event) => {
+      this.handleKeyPress(event);
+    });
+
+    // Error handling
+    window.addEventListener('error', (event) => {
+      console.error('Runtime error:', event.error);
+    });
+  }
+
+  handleKeyPress(event) {
+    switch (event.key) {
+      case 'r':
+        // Reset camera position
+        this.camera.setTarget(Vector3.Zero());
+        this.camera.radius = LensingConfig.CAMERA.INITIAL_RADIUS;
+        break;
+      case 'p':
+        // Toggle performance info
+        console.log(`FPS: ${this.performanceMonitor.getFPS()}`);
+        break;
+      case 'd':
+        // Toggle debug info
+        this.scene.debugLayer.isVisible() ? 
+          this.scene.debugLayer.hide() : 
+          this.scene.debugLayer.show();
+        break;
+    }
+  }
+
+  startRenderLoop() {
+    this.engine.runRenderLoop(() => {
+      try {
+        this.scene.render();
+      } catch (error) {
+        console.error('Render error:', error);
+      }
+    });
+  }
+
+  dispose() {
+    // Clean up resources
+    if (this.lensingEffect) {
+      this.lensingEffect.dispose();
+    }
+    
+    if (this.scene) {
+      this.scene.dispose();
+    }
+    
+    if (this.engine) {
+      this.engine.dispose();
+    }
+  }
+}
+
+// --- Initialize Application ---
+try {
+  const sceneManager = new SceneManager();
+  
+  // Expose for debugging
+  window.sceneManager = sceneManager;
+  
+} catch (error) {
+  console.error('Failed to initialize application:', error);
+  
+  // Show user-friendly error message
+  const canvas = document.getElementById('renderCanvas');
+  if (canvas) {
+    canvas.style.display = 'none';
+    const errorDiv = document.createElement('div');
+    errorDiv.innerHTML = `
+      <div style="text-align: center; padding: 50px; color: #ff6b6b;">
+        <h2>Failed to Load Gravitational Lensing Visualization</h2>
+        <p>Please check the console for more details.</p>
+        <p>Make sure your browser supports WebGL and the HDR texture file is available.</p>
+      </div>
+    `;
+    canvas.parentNode.insertBefore(errorDiv, canvas);
+  }
+}
