@@ -1,5 +1,4 @@
 import 'babylonjs-loaders';
-import './index.css';
 import { SceneManager } from './core/SceneManager.js';
 
 // --- Initialize Application ---

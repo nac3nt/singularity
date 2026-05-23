@@ -38,6 +38,8 @@ export class BlackHole {
             this.camera
         );
 
+        this.postProcess.enabled = false;
+
         this.postProcess.onApply = (effect) => {
             this.updateUniforms(effect);
         };

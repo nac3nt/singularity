@@ -107,7 +107,10 @@ export class RayMarchingShader {
 
           // Differential rotation angle (Keplerian shearing: inner parts rotate faster)
           // The rotation angle decays as 1/sqrt(r) to match Kepler's orbital velocity
-          float rotationAngle = time * diskNoiseSpeed * sqrt(diskInnerRadius / max(r, 0.0001));
+          // We add an initial offset proportional to the swirl speed so that at startup
+          // the disk is already sheared/wound into lines if speed is high.
+          float shearTimeOffset = 120.0 * diskNoiseSpeed;
+          float rotationAngle = (time + shearTimeOffset) * diskNoiseSpeed * sqrt(diskInnerRadius / max(r, 0.0001));
           
           float c = cos(rotationAngle);
           float s = sin(rotationAngle);
@@ -122,6 +125,9 @@ export class RayMarchingShader {
           float w1 = fbm(uv);
           float w2 = fbm(uv + vec2(w1, time * 0.05));
           float noiseVal = fbm(uv + vec2(w2 * 1.5, w1 * 0.4));
+          
+          // Contrast enhancement: sharpens highlights and deepens dark gas lanes
+          noiseVal = smoothstep(0.12, 0.88, noiseVal);
           
           // Smooth radial boundaries
           float innerFade = smoothstep(diskInnerRadius, diskInnerRadius + 1.5, r);

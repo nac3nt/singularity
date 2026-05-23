@@ -29,12 +29,12 @@ export class SceneManager {
             diskOuterRadius: 10.00,
             diskHeight: 0.05,
             diskNoiseScale: LensingConfig.PRESETS.quasar.diskNoiseScale,
-            diskNoiseSpeed: 0.85,
+            diskNoiseSpeed: 0.40,
             diskOpacity: 0.75,
             dopplerStrength: 1.0,
             redshiftStrength: 1.0,
             colorShiftEnabled: 1.0,
-            maxSteps: 280,
+            maxSteps: 500,
             colorInner: { ...LensingConfig.PRESETS.quasar.colorInner },
             colorOuter: { ...LensingConfig.PRESETS.quasar.colorOuter },
             renderScale: 1.00
@@ -48,7 +48,45 @@ export class SceneManager {
         this.setupEventHandlers();
         this.setupActivityTracker();
         this.setupUIBindings();
+        
+        // Set initial camera animation states
+        this.isDriftingCamera = true;
+        this.isTransitioningCamera = false;
+
+        // Start rendering immediately so the space skybox is visible during load
         this.startRenderLoop();
+        
+        if (this.scene) {
+            this.scene.executeWhenReady(() => {
+                // Enable the black hole raymarching post-process
+                if (this.blackHole && this.blackHole.postProcess) {
+                    this.blackHole.postProcess.enabled = true;
+                }
+
+                // Disable the skybox mesh to save rendering performance
+                if (this.spaceSkybox) {
+                    this.spaceSkybox.setEnabled(false);
+                }
+
+                const loader = document.getElementById('loadingOverlay');
+                const ui = document.querySelector('.ui-overlay');
+
+                if (loader) {
+                    loader.classList.add('fade-out');
+                }
+                if (ui) {
+                    ui.classList.add('ready');
+                }
+
+                // Normalize alpha to the nearest [-PI, PI] range for the shortest transition path
+                const twoPi = 2 * Math.PI;
+                this.camera.alpha = this.camera.alpha - twoPi * Math.round(this.camera.alpha / twoPi);
+
+                // Trigger smooth camera transition to focus on the black hole
+                this.isDriftingCamera = false;
+                this.isTransitioningCamera = true;
+            });
+        }
     }
 
     createScene() {
@@ -69,19 +107,22 @@ export class SceneManager {
             const hdrTexture = new HDRCubeTexture(LensingConfig.HDR.TEXTURE_PATH, this.scene, LensingConfig.HDR.TEXTURE_SIZE);
             this.scene.environmentTexture = hdrTexture;
             this.scene.environmentIntensity = LensingConfig.LIGHTING.ENVIRONMENT_INTENSITY;
+
+            // Create a background skybox mesh using the environment texture
+            this.spaceSkybox = this.scene.createDefaultSkybox(hdrTexture, true, 1000, 0.1);
         } catch (error) {
             console.warn('HDR texture loading failed:', error);
         }
     }
 
     setupCamera() {
-        // Initial camera view: Edge + just a little to the top so accretion disk is visible
+        // Initial camera view during loading: offset angles, target is center of the black hole
         this.camera = new ArcRotateCamera(
             'camera',
-            0.0, // Alpha (Edge-on view starts at 0.0)
-            Math.PI / 2.15, // Beta (Slightly tilted from the top, ~83.7 degrees, so accretion disk is visible)
-            450, // Radius (Optimized distance for starting view)
-            Vector3.Zero(),
+            Math.PI / 1.5, // Offset alpha
+            0.01, // Offset beta (fully top view)
+            650, // Offset radius
+            Vector3.Zero(), // Target the black hole center
             this.scene
         );
 
@@ -106,6 +147,38 @@ export class SceneManager {
             const deltaTime = this.engine.getDeltaTime();
             this.performanceMonitor.update();
             this.blackHole.update(deltaTime);
+
+            // Handle Camera Drift during loading
+            if (this.isDriftingCamera) {
+                this.camera.alpha += 0.00008 * deltaTime;
+            }
+
+            // Smoothly animate the camera to focus on the black hole when ready
+            if (this.isTransitioningCamera) {
+                const targetValues = {
+                    alpha: 0.0,
+                    beta: Math.PI / 2.15,
+                    radius: 450
+                };
+
+                const speed = 0.003 * deltaTime; // framerate-independent speed
+                
+                // Interpolate camera parameters
+                this.camera.alpha = this.camera.alpha + (targetValues.alpha - this.camera.alpha) * speed;
+                this.camera.beta = this.camera.beta + (targetValues.beta - this.camera.beta) * speed;
+                this.camera.radius = this.camera.radius + (targetValues.radius - this.camera.radius) * speed;
+
+                // Check if transition is complete
+                if (Math.abs(this.camera.alpha - targetValues.alpha) < 0.01 &&
+                    Math.abs(this.camera.beta - targetValues.beta) < 0.01 &&
+                    Math.abs(this.camera.radius - targetValues.radius) < 2.0) {
+                    
+                    this.camera.alpha = targetValues.alpha;
+                    this.camera.beta = targetValues.beta;
+                    this.camera.radius = targetValues.radius;
+                    this.isTransitioningCamera = false;
+                }
+            }
         });
     }
 
@@ -168,7 +241,7 @@ export class SceneManager {
         };
 
         // Accretion disk and black hole range sliders
-        updateSlider('radiusSlider', 'radiusVal', 'schwarzschildRadius', 'x');
+        updateSlider('radiusSlider', 'radiusVal', 'schwarzschildRadius', '');
         updateSlider('spinSlider', 'spinVal', 'blackHoleSpin');
         updateSlider('lensingSlider', 'lensingVal', 'lensStrength');
         updateSlider('diskInnerSlider', 'diskInnerVal', 'diskInnerRadius');
@@ -319,7 +392,7 @@ export class SceneManager {
             if (valDisplay) valDisplay.textContent = val.toFixed(2) + suffix;
         };
 
-        updateSliderEl('radiusSlider', 'radiusVal', preset.schwarzschildRadius, 'x');
+        updateSliderEl('radiusSlider', 'radiusVal', preset.schwarzschildRadius, '');
         updateSliderEl('spinSlider', 'spinVal', preset.blackHoleSpin);
         updateSliderEl('lensingSlider', 'lensingVal', preset.lensStrength);
         updateSliderEl('diskInnerSlider', 'diskInnerVal', preset.diskInnerRadius);
