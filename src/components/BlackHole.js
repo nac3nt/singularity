@@ -1,72 +1,122 @@
-import { MeshBuilder, PBRMaterial, Color3, Animation, Vector3 } from 'babylonjs';
+import { PostProcess } from 'babylonjs';
 import { LensingConfig } from '../Config.js';
+import { RayMarchingShader } from '../effects/RayMarchingShader.js';
 
 export class BlackHole {
-    constructor(scene) {
+    constructor(scene, camera, engine, sceneManager = null) {
         this.scene = scene;
+        this.camera = camera;
+        this.engine = engine;
+        this.sceneManager = sceneManager;
         this.mesh = null;
-        this.material = null;
-        this.animationTime = 0;
+        this.postProcess = null;
+        this.time = 0;
+
         this.createBlackHole();
     }
 
     createBlackHole() {
-        // Create enhanced black hole geometry
-        this.mesh = MeshBuilder.CreateSphere('blackHole', {
-            diameter: LensingConfig.BLACK_HOLE.DIAMETER,
-            segments: LensingConfig.BLACK_HOLE.SEGMENTS
-        }, this.scene);
+        // Register the shader
+        RayMarchingShader.createShader();
 
-        // Use PBR material for more realistic appearance
-        this.material = new PBRMaterial('blackHoleMat', this.scene);
-        this.material.baseColor = new Color3(0, 0, 0);
-        this.material.metallic = 0.0;
-        this.material.roughness = 1.0;
-        this.material.emissiveColor = new Color3(0, 0, 0);
-
-        // Disable back face culling for better appearance
-        this.material.backFaceCulling = false;
-
-        this.mesh.material = this.material;
-
-        // Add subtle animation
-        this.createAnimation();
-    }
-
-    createAnimation() {
-        // Subtle rotation animation
-        const rotationAnimation = Animation.CreateAndStartAnimation(
-            'blackHoleRotation',
-            this.mesh,
-            'rotation.y',
-            30, // 30 FPS
-            3000, // 100 seconds for full rotation
-            0,
-            Math.PI * 2,
-            Animation.ANIMATIONLOOPMODE_CYCLE
-        );
-    }
-
-    getScreenPosition(camera, engine) {
-        const projected = Vector3.Project(
-            this.mesh.position,
-            this.mesh.getWorldMatrix(),
-            this.scene.getTransformMatrix(),
-            camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
+        // Create the post-process in standard (LDR) mode.
+        this.postProcess = new PostProcess(
+            "blackHoleRayMarch",
+            "blackHoleRayMarch",
+            [
+                "time", "resolution", "cameraPosition", "cameraTarget", "cameraUp",
+                "cameraTanHalfFov", "schwarzschildRadius", "lensStrength",
+                "diskInnerRadius", "diskOuterRadius", "diskHeight",
+                "diskColorInner", "diskColorOuter", "diskOpacity",
+                "diskNoiseScale", "diskNoiseSpeed",
+                "dopplerStrength", "redshiftStrength",
+                "maxSteps", "colorShiftEnabled",
+                "blackHoleSpin"
+            ],
+            ["envTexture"],
+            1.0,
+            this.camera
         );
 
-        return {
-            x: projected.x / engine.getRenderWidth(),
-            y: 1.0 - projected.y / engine.getRenderHeight()
+        this.postProcess.onApply = (effect) => {
+            this.updateUniforms(effect);
         };
     }
 
-    getAngularRadius(camera) {
-        return Math.atan(LensingConfig.BLACK_HOLE.WORLD_RADIUS / camera.radius);
+    updateUniforms(effect) {
+        // Fetch dynamic settings from SceneManager or fall back to LensingConfig
+        const settings = this.sceneManager ? this.sceneManager.settings : null;
+
+        // Camera uniforms
+        effect.setFloat("time", this.time);
+        effect.setFloat2("resolution", this.engine.getRenderWidth(), this.engine.getRenderHeight());
+        effect.setVector3("cameraPosition", this.camera.position);
+        effect.setVector3("cameraTarget", this.camera.target);
+        effect.setVector3("cameraUp", this.camera.upVector);
+        effect.setFloat("cameraTanHalfFov", Math.tan(this.camera.fov * 0.5));
+
+        // Environment
+        if (this.scene.environmentTexture) {
+            effect.setTexture("envTexture", this.scene.environmentTexture);
+        }
+
+        // Physical and Visual parameters (Dynamic or Static fallback)
+        const rs = settings ? settings.schwarzschildRadius : (LensingConfig.BLACK_HOLE.WORLD_RADIUS * 2.0);
+        effect.setFloat("schwarzschildRadius", rs);
+
+        const lensStrength = settings ? settings.lensStrength : LensingConfig.Lensing.STRENGTH;
+        effect.setFloat("lensStrength", lensStrength);
+
+        // Kerr metric frame-dragging spin
+        const blackHoleSpin = settings ? settings.blackHoleSpin : 0.90;
+        effect.setFloat("blackHoleSpin", blackHoleSpin);
+
+        // Accretion Disk Dimensions (Relative to Schwarzschild Radius)
+        const diskInner = settings ? settings.diskInnerRadius : LensingConfig.ACCRETION_DISK.INNER_RADIUS;
+        const diskOuter = settings ? settings.diskOuterRadius : LensingConfig.ACCRETION_DISK.OUTER_RADIUS;
+        const diskHeight = settings ? settings.diskHeight : LensingConfig.ACCRETION_DISK.HEIGHT;
+
+        effect.setFloat("diskInnerRadius", rs * diskInner);
+        effect.setFloat("diskOuterRadius", rs * diskOuter);
+        effect.setFloat("diskHeight", rs * diskHeight);
+
+        // Accretion Disk Colors (RGB)
+        const cInner = settings ? settings.colorInner : LensingConfig.ACCRETION_DISK.COLOR_INNER;
+        const cOuter = settings ? settings.colorOuter : LensingConfig.ACCRETION_DISK.COLOR_OUTER;
+        effect.setFloat3("diskColorInner", cInner.r, cInner.g, cInner.b);
+        effect.setFloat3("diskColorOuter", cOuter.r, cOuter.g, cOuter.b);
+
+        // Accretion Disk Noise & Opacity
+        const diskOpacity = settings ? settings.diskOpacity : LensingConfig.ACCRETION_DISK.OPACITY;
+        const diskNoiseScale = settings ? settings.diskNoiseScale : LensingConfig.ACCRETION_DISK.NOISE_SCALE;
+        const diskNoiseSpeed = settings ? settings.diskNoiseSpeed : LensingConfig.ACCRETION_DISK.NOISE_SPEED;
+
+        effect.setFloat("diskOpacity", diskOpacity);
+        effect.setFloat("diskNoiseScale", diskNoiseScale);
+        effect.setFloat("diskNoiseSpeed", diskNoiseSpeed);
+
+        // Relativistic effects toggles/factors
+        const dopplerStrength = settings ? settings.dopplerStrength : LensingConfig.PHYSICS.DOPPLER_STRENGTH;
+        const redshiftStrength = settings ? settings.redshiftStrength : LensingConfig.PHYSICS.REDSHIFT_STRENGTH;
+        const colorShiftEnabled = settings ? settings.colorShiftEnabled : 1.0;
+
+        effect.setFloat("dopplerStrength", dopplerStrength);
+        effect.setFloat("redshiftStrength", redshiftStrength);
+        effect.setFloat("colorShiftEnabled", colorShiftEnabled);
+
+        // Performance clamping
+        const maxSteps = settings ? settings.maxSteps : LensingConfig.PERFORMANCE.MAX_STEPS;
+        effect.setFloat("maxSteps", maxSteps);
     }
 
     update(deltaTime) {
-        this.animationTime += deltaTime;
-        // Add any per-frame updates here
+        // Increment uniform time counter
+        this.time += deltaTime * 0.001;
+    }
+
+    dispose() {
+        if (this.postProcess) {
+            this.postProcess.dispose();
+        }
     }
 }

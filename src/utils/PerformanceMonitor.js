@@ -28,10 +28,10 @@ export class PerformanceMonitor {
         const targetFps = LensingConfig.PERFORMANCE.TARGET_FPS;
         if (this.fps < targetFps * 0.8) {
             // Reduce quality
-            console.log('Reducing quality for better performance');
+            // console.log('Reducing quality for better performance');
         } else if (this.fps > targetFps * 1.1) {
             // Increase quality
-            console.log('Increasing quality');
+            // console.log('Increasing quality');
         }
     }
 

@@ -1,12 +1,10 @@
 import {
-    Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight,
-    MeshBuilder, Color3, GlowLayer, Texture,
-    HDRCubeTexture, BackgroundMaterial
+    Engine, Scene, ArcRotateCamera, Vector3,
+    HDRCubeTexture
 } from 'babylonjs';
 import { LensingConfig } from '../Config.js';
 import { PerformanceMonitor } from '../utils/PerformanceMonitor.js';
 import { BlackHole } from '../components/BlackHole.js';
-import { LensingEffect } from '../effects/LensingEffect.js';
 
 export class SceneManager {
     constructor() {
@@ -15,10 +13,32 @@ export class SceneManager {
         this.scene = null;
         this.camera = null;
         this.blackHole = null;
-        this.lensingEffect = null;
-        this.glowLayer = null;
         this.performanceMonitor = null;
-        this.glowTime = 0;
+        // Activity and Framerate Throttling State
+        this.lastInputTime = performance.now();
+        this.isIdle = false;
+        this.fpsCap = 60.0;
+        this.lastFrameTime = performance.now();
+
+        // Initialize application state with user-defined starting values
+        this.settings = {
+            schwarzschildRadius: LensingConfig.PRESETS.quasar.schwarzschildRadius, // 20.0
+            blackHoleSpin: 0.99,
+            lensStrength: 1.00,
+            diskInnerRadius: 2.00,
+            diskOuterRadius: 10.00,
+            diskHeight: 0.05,
+            diskNoiseScale: LensingConfig.PRESETS.quasar.diskNoiseScale,
+            diskNoiseSpeed: 0.85,
+            diskOpacity: 0.75,
+            dopplerStrength: 1.0,
+            redshiftStrength: 1.0,
+            colorShiftEnabled: 1.0,
+            maxSteps: 280,
+            colorInner: { ...LensingConfig.PRESETS.quasar.colorInner },
+            colorOuter: { ...LensingConfig.PRESETS.quasar.colorOuter },
+            renderScale: 1.00
+        };
 
         this.initialize();
     }
@@ -26,6 +46,8 @@ export class SceneManager {
     initialize() {
         this.createScene();
         this.setupEventHandlers();
+        this.setupActivityTracker();
+        this.setupUIBindings();
         this.startRenderLoop();
     }
 
@@ -33,166 +55,306 @@ export class SceneManager {
         this.scene = new Scene(this.engine);
         this.performanceMonitor = new PerformanceMonitor(this.engine);
 
-        // Enhanced environment setup
         this.setupEnvironment();
         this.setupCamera();
-        this.setupLighting();
 
-        // Create enhanced black hole
-        this.blackHole = new BlackHole(this.scene);
+        // Instantiate black hole, passing SceneManager reference for dynamic configurations
+        this.blackHole = new BlackHole(this.scene, this.camera, this.engine, this);
 
-        // Setup lensing effect
-        this.lensingEffect = new LensingEffect(this.scene, this.camera, this.blackHole, this.engine);
-
-        // Enhanced glow effect
-        this.setupGlowEffect();
-
-        // Setup animations
         this.setupAnimations();
     }
 
     setupEnvironment() {
         try {
-            // Load HDR environment
             const hdrTexture = new HDRCubeTexture(LensingConfig.HDR.TEXTURE_PATH, this.scene, LensingConfig.HDR.TEXTURE_SIZE);
             this.scene.environmentTexture = hdrTexture;
             this.scene.environmentIntensity = LensingConfig.LIGHTING.ENVIRONMENT_INTENSITY;
-
-            // Enhanced background setup
-            const backgroundMaterial = new BackgroundMaterial('backgroundMaterial', this.scene);
-            backgroundMaterial.backFaceCulling = false;
-            backgroundMaterial.reflectionTexture = new Texture(
-                LensingConfig.HDR.TEXTURE_PATH,
-                this.scene,
-                false, false,
-                Texture.BILINEAR_SAMPLINGMODE,
-                null, null, undefined, true
-            );
-            backgroundMaterial.reflectionTexture.coordinatesMode = Texture.FIXED_EQUIRECTANGULAR_MODE;
-
-            const backgroundSphere = MeshBuilder.CreateSphere('backgroundSphere', {
-                segments: LensingConfig.BACKGROUND.SPHERE_SEGMENTS,
-                diameter: LensingConfig.BACKGROUND.SPHERE_DIAMETER
-            }, this.scene);
-
-            backgroundSphere.material = backgroundMaterial;
-            backgroundSphere.infiniteDistance = true;
-            backgroundSphere.isPickable = false;
         } catch (error) {
-            console.warn('HDR texture loading failed, using fallback environment:', error);
-            this.setupFallbackEnvironment();
+            console.warn('HDR texture loading failed:', error);
         }
     }
 
-    setupFallbackEnvironment() {
-        // Fallback environment for when HDR fails to load
-        this.scene.createDefaultSkybox(null, true, 1000);
-    }
-
     setupCamera() {
+        // Initial camera view: Edge + just a little to the top so accretion disk is visible
         this.camera = new ArcRotateCamera(
             'camera',
-            LensingConfig.CAMERA.ALPHA,
-            LensingConfig.CAMERA.BETA,
-            LensingConfig.CAMERA.INITIAL_RADIUS,
+            0.0, // Alpha (Edge-on view starts at 0.0)
+            Math.PI / 2.15, // Beta (Slightly tilted from the top, ~83.7 degrees, so accretion disk is visible)
+            450, // Radius (Optimized distance for starting view)
             Vector3.Zero(),
             this.scene
         );
 
         this.camera.attachControl(this.canvas, true);
 
-        // Enhanced camera controls
+        // Enhanced camera controls limits
         this.camera.lowerRadiusLimit = LensingConfig.CAMERA.MIN_RADIUS;
         this.camera.upperRadiusLimit = LensingConfig.CAMERA.MAX_RADIUS;
         this.camera.panningOriginTarget = Vector3.Zero();
         this.camera.panningInertia = 0.8;
         this.camera.panningAxis = new Vector3(1, 1, 0);
 
-        // Adjust sensitivity
+        // Adjust mouse/scroll sensitivity
         this.camera.panningSensibility = 1000 / LensingConfig.CAMERA.PAN_SENSITIVITY;
         this.camera.wheelPrecision = 50 / LensingConfig.CAMERA.ZOOM_SENSITIVITY;
     }
 
-    setupLighting() {
-        const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), this.scene);
-        hemiLight.intensity = LensingConfig.LIGHTING.HEMI_INTENSITY;
-        hemiLight.groundColor = new Color3(0.1, 0.05, 0.2);
-    }
 
-    setupGlowEffect() {
-        this.glowLayer = new GlowLayer('glow', this.scene, {
-            blurKernelSize: LensingConfig.GLOW.INITIAL_BLUR_KERNEL
-        });
-        this.glowLayer.intensity = LensingConfig.GLOW.INITIAL_INTENSITY;
-
-        // Make the black hole glow subtly
-        this.glowLayer.addIncludedOnlyMesh(this.blackHole.mesh);
-    }
 
     setupAnimations() {
         this.scene.registerBeforeRender(() => {
             const deltaTime = this.engine.getDeltaTime();
-
-            // Update performance monitor
             this.performanceMonitor.update();
-
-            // Update black hole
             this.blackHole.update(deltaTime);
-
-            // Update lensing effect
-            this.lensingEffect.update(deltaTime);
-
-            // Animate glow effect
-            this.updateGlowAnimation(deltaTime);
         });
     }
 
-    updateGlowAnimation(deltaTime) {
-        this.glowTime += deltaTime * LensingConfig.GLOW.ANIMATION.SPEED;
-
-        const config = LensingConfig.GLOW.ANIMATION;
-        this.glowLayer.intensity = config.INTENSITY_BASE +
-            config.INTENSITY_AMPLITUDE * Math.sin(this.glowTime);
-
-        const blur = config.BLUR_BASE +
-            config.BLUR_AMPLITUDE * Math.sin(this.glowTime + config.BLUR_PHASE_OFFSET);
-
-        const roundedBlur = Math.round(blur);
-        if (this.glowLayer.blurKernelSize !== roundedBlur) {
-            this.glowLayer.blurKernelSize = roundedBlur;
-        }
-    }
-
     setupEventHandlers() {
-        // Enhanced resize handling
         window.addEventListener('resize', () => {
             this.engine.resize();
         });
 
-        // Keyboard controls for debugging
         window.addEventListener('keydown', (event) => {
             this.handleKeyPress(event);
         });
 
-        // Error handling
         window.addEventListener('error', (event) => {
             console.error('Runtime error:', event.error);
         });
     }
 
+    setupActivityTracker() {
+        const resetIdleTimer = () => {
+            this.lastInputTime = performance.now();
+            if (this.isIdle) {
+                this.isIdle = false;
+                this.fpsCap = 60.0; // Boost FPS back to 60 immediately on activity
+            }
+        };
+
+        // Register window interaction listeners
+        const events = ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'touchstart', 'touchmove'];
+        events.forEach(evtName => {
+            window.addEventListener(evtName, resetIdleTimer, { passive: true });
+        });
+    }
+
+    setupUIBindings() {
+        const toggleBtn = document.getElementById('togglePanelBtn');
+        const controlPanel = document.getElementById('controlPanel');
+        
+        // Hide/Show sidebar panel
+        if (toggleBtn && controlPanel) {
+            toggleBtn.addEventListener('click', () => {
+                controlPanel.classList.toggle('collapsed');
+                toggleBtn.classList.toggle('panel-open');
+            });
+        }
+
+        // Helper to link sliders
+        const updateSlider = (id, valId, key, suffix = '') => {
+            const slider = document.getElementById(id);
+            const valDisplay = document.getElementById(valId);
+            if (slider && valDisplay) {
+                slider.value = this.settings[key];
+                valDisplay.textContent = this.settings[key].toFixed(2) + suffix;
+                
+                slider.addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    this.settings[key] = val;
+                    valDisplay.textContent = val.toFixed(2) + suffix;
+                });
+            }
+        };
+
+        // Accretion disk and black hole range sliders
+        updateSlider('radiusSlider', 'radiusVal', 'schwarzschildRadius', 'x');
+        updateSlider('spinSlider', 'spinVal', 'blackHoleSpin');
+        updateSlider('lensingSlider', 'lensingVal', 'lensStrength');
+        updateSlider('diskInnerSlider', 'diskInnerVal', 'diskInnerRadius');
+        updateSlider('diskOuterSlider', 'diskOuterVal', 'diskOuterRadius');
+        updateSlider('diskHeightSlider', 'diskHeightVal', 'diskHeight');
+        updateSlider('diskSpeedSlider', 'diskSpeedVal', 'diskNoiseSpeed');
+        updateSlider('diskOpacitySlider', 'diskOpacityVal', 'diskOpacity');
+        
+        // Resolution Scaling (Hardware Scaling)
+        const renderScaleSlider = document.getElementById('renderScaleSlider');
+        const renderScaleVal = document.getElementById('renderScaleVal');
+        if (renderScaleSlider && renderScaleVal) {
+            renderScaleSlider.value = this.settings.renderScale;
+            renderScaleVal.textContent = this.settings.renderScale.toFixed(2) + 'x';
+            renderScaleSlider.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                this.settings.renderScale = val;
+                renderScaleVal.textContent = val.toFixed(2) + 'x';
+                this.engine.setHardwareScalingLevel(1 / val);
+            });
+        }
+
+        // Raymarching Step Counts
+        const rayStepsSlider = document.getElementById('rayStepsSlider');
+        const rayStepsVal = document.getElementById('rayStepsVal');
+        if (rayStepsSlider && rayStepsVal) {
+            rayStepsSlider.value = this.settings.maxSteps;
+            rayStepsVal.textContent = Math.round(this.settings.maxSteps);
+            rayStepsSlider.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value);
+                this.settings.maxSteps = val;
+                rayStepsVal.textContent = val;
+            });
+        }
+
+        // Helper to link check-toggles
+        const bindToggle = (id, key) => {
+            const toggle = document.getElementById(id);
+            if (toggle) {
+                toggle.checked = this.settings[key] > 0.5;
+                toggle.addEventListener('change', (e) => {
+                    this.settings[key] = e.target.checked ? 1.0 : 0.0;
+                });
+            }
+        };
+
+        bindToggle('dopplerToggle', 'dopplerStrength');
+        bindToggle('redshiftToggle', 'redshiftStrength');
+        bindToggle('colorShiftToggle', 'colorShiftEnabled');
+
+        // Preset button array listeners
+        const presetButtons = document.querySelectorAll('.btn-preset');
+        presetButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                presetButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const presetKey = btn.getAttribute('data-preset');
+                this.applyPreset(presetKey);
+            });
+        });
+
+        // Camera viewpoint buttons listeners
+        const camButtons = document.querySelectorAll('.btn-camera');
+        const updateCamButtonState = (activeId) => {
+            camButtons.forEach(btn => btn.classList.remove('active'));
+            const activeBtn = document.getElementById(activeId);
+            if (activeBtn) activeBtn.classList.add('active');
+        };
+
+        const btnCamOrbit = document.getElementById('btnCamOrbit');
+        const btnCamEdge = document.getElementById('btnCamEdge');
+        const btnCamPolar = document.getElementById('btnCamPolar');
+        const btnCamReset = document.getElementById('btnCamReset');
+
+        if (btnCamOrbit) {
+            btnCamOrbit.addEventListener('click', () => {
+                updateCamButtonState('btnCamOrbit');
+                this.camera.useAutoRotationBehavior = true;
+                this.camera.autoRotationBehavior.idleRotationSpeed = 0.05;
+                this.camera.beta = Math.PI / 2.8;
+                this.camera.radius = 450;
+            });
+        }
+        if (btnCamEdge) {
+            btnCamEdge.addEventListener('click', () => {
+                updateCamButtonState('btnCamEdge');
+                this.camera.useAutoRotationBehavior = false;
+                this.camera.alpha = 0;
+                this.camera.beta = Math.PI / 2;
+                this.camera.radius = 480;
+            });
+        }
+        if (btnCamPolar) {
+            btnCamPolar.addEventListener('click', () => {
+                updateCamButtonState('btnCamPolar');
+                this.camera.useAutoRotationBehavior = false;
+                this.camera.alpha = Math.PI / 2;
+                this.camera.beta = 0.01;
+                this.camera.radius = 400;
+            });
+        }
+        if (btnCamReset) {
+            btnCamReset.addEventListener('click', () => {
+                updateCamButtonState('btnCamReset');
+                this.camera.useAutoRotationBehavior = false;
+                this.camera.alpha = 0.0;
+                this.camera.beta = Math.PI / 2.15;
+                this.camera.radius = 450;
+                this.camera.setTarget(Vector3.Zero());
+            });
+        }
+
+        // Cancel camera auto-rotations when drag-orbiting is triggered
+        this.canvas.addEventListener('pointerdown', () => {
+            if (this.camera && this.camera.useAutoRotationBehavior) {
+                this.camera.useAutoRotationBehavior = false;
+                camButtons.forEach(btn => btn.classList.remove('active'));
+            }
+        });
+    }
+
+    applyPreset(key) {
+        const preset = LensingConfig.PRESETS[key];
+        if (!preset) return;
+
+        // Update settings properties
+        this.settings.schwarzschildRadius = preset.schwarzschildRadius;
+        this.settings.blackHoleSpin = preset.blackHoleSpin;
+        this.settings.lensStrength = preset.lensStrength;
+        this.settings.diskInnerRadius = preset.diskInnerRadius;
+        this.settings.diskOuterRadius = preset.diskOuterRadius;
+        this.settings.diskHeight = preset.diskHeight;
+        this.settings.diskNoiseScale = preset.diskNoiseScale;
+        this.settings.diskNoiseSpeed = preset.diskNoiseSpeed;
+        this.settings.diskOpacity = preset.diskOpacity;
+        this.settings.dopplerStrength = preset.dopplerStrength;
+        this.settings.redshiftStrength = preset.redshiftStrength;
+        this.settings.colorShiftEnabled = preset.colorShiftEnabled;
+        this.settings.maxSteps = preset.maxSteps;
+        this.settings.colorInner = { ...preset.colorInner };
+        this.settings.colorOuter = { ...preset.colorOuter };
+
+        // Synchronize HTML range slider displays
+        const updateSliderEl = (id, valId, val, suffix = '') => {
+            const el = document.getElementById(id);
+            const valDisplay = document.getElementById(valId);
+            if (el) el.value = val;
+            if (valDisplay) valDisplay.textContent = val.toFixed(2) + suffix;
+        };
+
+        updateSliderEl('radiusSlider', 'radiusVal', preset.schwarzschildRadius, 'x');
+        updateSliderEl('spinSlider', 'spinVal', preset.blackHoleSpin);
+        updateSliderEl('lensingSlider', 'lensingVal', preset.lensStrength);
+        updateSliderEl('diskInnerSlider', 'diskInnerVal', preset.diskInnerRadius);
+        updateSliderEl('diskOuterSlider', 'diskOuterVal', preset.diskOuterRadius);
+        updateSliderEl('diskHeightSlider', 'diskHeightVal', preset.diskHeight);
+        updateSliderEl('diskSpeedSlider', 'diskSpeedVal', preset.diskNoiseSpeed);
+        updateSliderEl('diskOpacitySlider', 'diskOpacityVal', preset.diskOpacity);
+
+        const rayStepsSlider = document.getElementById('rayStepsSlider');
+        const rayStepsVal = document.getElementById('rayStepsVal');
+        if (rayStepsSlider) rayStepsSlider.value = preset.maxSteps;
+        if (rayStepsVal) rayStepsVal.textContent = Math.round(preset.maxSteps);
+
+        const dopplerToggle = document.getElementById('dopplerToggle');
+        if (dopplerToggle) dopplerToggle.checked = preset.dopplerStrength > 0.5;
+
+        const redshiftToggle = document.getElementById('redshiftToggle');
+        if (redshiftToggle) redshiftToggle.checked = preset.redshiftStrength > 0.5;
+
+        const colorShiftToggle = document.getElementById('colorShiftToggle');
+        if (colorShiftToggle) colorShiftToggle.checked = preset.colorShiftEnabled > 0.5;
+    }
+
     handleKeyPress(event) {
         switch (event.key) {
             case 'r':
-                // Reset camera position
+                this.camera.alpha = 0.0;
+                this.camera.beta = Math.PI / 2.15;
+                this.camera.radius = 450;
                 this.camera.setTarget(Vector3.Zero());
-                this.camera.radius = LensingConfig.CAMERA.INITIAL_RADIUS;
                 break;
             case 'p':
-                // Toggle performance info
                 console.log(`FPS: ${this.performanceMonitor.getFPS()}`);
                 break;
             case 'd':
-                // Toggle debug info
                 this.scene.debugLayer.isVisible() ?
                     this.scene.debugLayer.hide() :
                     this.scene.debugLayer.show();
@@ -203,7 +365,25 @@ export class SceneManager {
     startRenderLoop() {
         this.engine.runRenderLoop(() => {
             try {
-                this.scene.render();
+                const now = performance.now();
+                
+                // 1. Idle Detection (transition cap to 35 FPS after 5 seconds of inactivity)
+                if (!this.isIdle && (now - this.lastInputTime > 5000.0)) {
+                    this.isIdle = true;
+                    this.fpsCap = 35.0;
+                }
+                
+                // 2. Framerate throttling regulator
+                const elapsed = now - this.lastFrameTime;
+                const targetInterval = 1000.0 / this.fpsCap;
+                
+                if (elapsed >= targetInterval) {
+                    // Update frame reference timestamp
+                    this.lastFrameTime = now - (elapsed % targetInterval);
+                    
+                    // Render frame
+                    this.scene.render();
+                }
             } catch (error) {
                 console.error('Render error:', error);
             }
@@ -211,15 +391,9 @@ export class SceneManager {
     }
 
     dispose() {
-        // Clean up resources
-        if (this.lensingEffect) {
-            this.lensingEffect.dispose();
-        }
-
         if (this.scene) {
             this.scene.dispose();
         }
-
         if (this.engine) {
             this.engine.dispose();
         }

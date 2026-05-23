@@ -3,23 +3,161 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Solar System Babylon.js</title>
-    <style>
-      html, body, #renderCanvas {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background: #000;
-      }
-      #renderCanvas {
-        display: block;
-      }
-    </style>
+    <title>Relativistic Black Hole & Lensing Simulation</title>
   </head>
   <body>
     <canvas id="renderCanvas"></canvas>
+
+    <div class="ui-overlay">
+      <!-- Toggle button -->
+      <button id="togglePanelBtn" class="btn-toggle-panel panel-open" aria-label="Toggle settings panel">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+
+      <!-- Main Panel -->
+      <div id="controlPanel" class="control-panel">
+        <div class="panel-header">
+          <h1 class="panel-title">Singularity</h1>
+          <p class="panel-subtitle">Relativistic Simulation</p>
+        </div>
+
+        <div class="control-content">
+          <!-- Presets -->
+          <div class="section">
+            <div class="section-title">Visual Presets</div>
+            <div class="presets-grid">
+              <button class="btn-preset active" data-preset="quasar">Realistic Active</button>
+              <button class="btn-preset" data-preset="stellar">Stellar-Mass</button>
+              <button class="btn-preset" data-preset="gargantua">Artistic Gold</button>
+              <button class="btn-preset" data-preset="scientific">Sci Grid</button>
+            </div>
+          </div>
+
+          <!-- Black Hole Config -->
+          <div class="section">
+            <div class="section-title">Black Hole Physics</div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Mass Scale (Radius)</span>
+                <span id="radiusVal" class="control-value">1.0x</span>
+              </div>
+              <input type="range" id="radiusSlider" min="0.5" max="2.0" step="0.05" value="1.0" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Black Hole Spin (a)</span>
+                <span id="spinVal" class="control-value">0.90</span>
+              </div>
+              <input type="range" id="spinSlider" min="-0.99" max="0.99" step="0.02" value="0.90" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Lensing Strength</span>
+                <span id="lensingVal" class="control-value">0.55</span>
+              </div>
+              <input type="range" id="lensingSlider" min="0.0" max="1.5" step="0.05" value="0.55" />
+            </div>
+          </div>
+
+          <!-- Accretion Disk Config -->
+          <div class="section">
+            <div class="section-title">Accretion Disk</div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Inner Radius (Rs)</span>
+                <span id="diskInnerVal" class="control-value">3.0</span>
+              </div>
+              <input type="range" id="diskInnerSlider" min="2.0" max="6.0" step="0.1" value="3.0" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Outer Radius (Rs)</span>
+                <span id="diskOuterVal" class="control-value">12.0</span>
+              </div>
+              <input type="range" id="diskOuterSlider" min="7.0" max="20.0" step="0.5" value="12.0" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Disk Height (Rs)</span>
+                <span id="diskHeightVal" class="control-value">0.05</span>
+              </div>
+              <input type="range" id="diskHeightSlider" min="0.01" max="0.3" step="0.01" value="0.05" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Gas Swirl Speed</span>
+                <span id="diskSpeedVal" class="control-value">0.3</span>
+              </div>
+              <input type="range" id="diskSpeedSlider" min="0.0" max="1.5" step="0.05" value="0.3" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Disk Opacity</span>
+                <span id="diskOpacityVal" class="control-value">0.70</span>
+              </div>
+              <input type="range" id="diskOpacitySlider" min="0.05" max="1.0" step="0.05" value="0.70" />
+            </div>
+          </div>
+
+          <!-- Relativistic Effects -->
+          <div class="section">
+            <div class="section-title">Relativistic Effects</div>
+            <div class="toggle-group">
+              <span class="control-label" style="margin:0;">Doppler Beaming</span>
+              <label class="switch">
+                <input type="checkbox" id="dopplerToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+            <div class="toggle-group">
+              <span class="control-label" style="margin:0;">Gravitational Redshift</span>
+              <label class="switch">
+                <input type="checkbox" id="redshiftToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+            <div class="toggle-group">
+              <span class="control-label" style="margin:0;">Wavelength Color Shift</span>
+              <label class="switch">
+                <input type="checkbox" id="colorShiftToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Quality & Performance -->
+          <div class="section">
+            <div class="section-title">Performance & Quality</div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Render Resolution Scale</span>
+                <span id="renderScaleVal" class="control-value">1.0x</span>
+              </div>
+              <input type="range" id="renderScaleSlider" min="0.25" max="1.0" step="0.05" value="1.0" />
+            </div>
+            <div class="control-group">
+              <div class="control-label">
+                <span>Ray Steps (Quality)</span>
+                <span id="rayStepsVal" class="control-value">250</span>
+              </div>
+              <input type="range" id="rayStepsSlider" min="50" max="500" step="10" value="250" />
+            </div>
+          </div>
+
+          <!-- Camera Settings -->
+          <div class="section" style="margin-bottom:0;">
+            <div class="section-title">Camera Views</div>
+            <div class="camera-row">
+              <button class="btn-camera" id="btnCamOrbit" data-view="cinematic">Orbit</button>
+              <button class="btn-camera" id="btnCamEdge" data-view="edge">Edge</button>
+              <button class="btn-camera" id="btnCamPolar" data-view="polar">Polar</button>
+              <button class="btn-camera" id="btnCamReset" data-view="reset">Reset</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
-</html> 
+</html>
