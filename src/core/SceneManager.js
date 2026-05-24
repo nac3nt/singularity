@@ -20,27 +20,28 @@ export class SceneManager {
         this.fpsCap = 60.0;
         this.lastFrameTime = performance.now();
 
-        // Initialize application state with user-defined starting values
+        // Initialize application state with default preset (quasar / Realistic Active) values
+        const defaultPreset = LensingConfig.PRESETS.quasar;
         this.settings = {
-            schwarzschildRadius: LensingConfig.PRESETS.quasar.schwarzschildRadius, // 20.0
-            blackHoleSpin: 0.99,
-            lensStrength: 1.00,
-            diskInnerRadius: 2.00,
-            diskOuterRadius: 10.00,
-            diskHeight: 0.05,
-            diskNoiseScale: LensingConfig.PRESETS.quasar.diskNoiseScale,
-            diskNoiseSpeed: 0.40,
-            diskOpacity: 0.75,
-            dopplerStrength: 1.0,
-            redshiftStrength: 1.0,
-            colorShiftEnabled: 1.0,
-            atmosphereEnabled: LensingConfig.BACKGROUND.ATMOSPHERE_ENABLED,
-            fpsLimitEnabled: LensingConfig.PERFORMANCE.FPS_LIMIT_ENABLED,
-            filmGrainEnabled: LensingConfig.BACKGROUND.FILM_GRAIN_ENABLED,
-            fxaaEnabled: LensingConfig.PERFORMANCE.FXAA_ENABLED,
-            maxSteps: 500,
-            colorInner: { ...LensingConfig.PRESETS.quasar.colorInner },
-            colorOuter: { ...LensingConfig.PRESETS.quasar.colorOuter },
+            schwarzschildRadius: defaultPreset.schwarzschildRadius,
+            blackHoleSpin: defaultPreset.blackHoleSpin,
+            lensStrength: defaultPreset.lensStrength,
+            diskInnerRadius: defaultPreset.diskInnerRadius,
+            diskOuterRadius: defaultPreset.diskOuterRadius,
+            diskHeight: defaultPreset.diskHeight,
+            diskNoiseScale: defaultPreset.diskNoiseScale,
+            diskNoiseSpeed: defaultPreset.diskNoiseSpeed,
+            diskOpacity: defaultPreset.diskOpacity,
+            dopplerStrength: defaultPreset.dopplerStrength,
+            redshiftStrength: defaultPreset.redshiftStrength,
+            colorShiftEnabled: defaultPreset.colorShiftEnabled,
+            atmosphereEnabled: defaultPreset.atmosphereEnabled !== undefined ? defaultPreset.atmosphereEnabled : 1.0,
+            fpsLimitEnabled: defaultPreset.fpsLimitEnabled !== undefined ? defaultPreset.fpsLimitEnabled : 1.0,
+            filmGrainEnabled: defaultPreset.filmGrainEnabled !== undefined ? defaultPreset.filmGrainEnabled : 1.0,
+            fxaaEnabled: defaultPreset.fxaaEnabled !== undefined ? defaultPreset.fxaaEnabled : 0.0,
+            maxSteps: defaultPreset.maxSteps,
+            colorInner: { ...defaultPreset.colorInner },
+            colorOuter: { ...defaultPreset.colorOuter },
             renderScale: 1.00
         };
 

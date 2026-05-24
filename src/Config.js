@@ -87,7 +87,7 @@ export class LensingConfig {
             schwarzschildRadius: 20.0,
             blackHoleSpin: 0.90,
             lensStrength: 0.55,
-            diskInnerRadius: 3.0,
+            diskInnerRadius: 1.2,
             diskOuterRadius: 12.0,
             diskHeight: 0.05,
             diskNoiseScale: 0.15,
@@ -109,7 +109,7 @@ export class LensingConfig {
             schwarzschildRadius: 12.0,
             blackHoleSpin: 0.40,
             lensStrength: 0.75,
-            diskInnerRadius: 3.0,
+            diskInnerRadius: 2.3,
             diskOuterRadius: 10.0,
             diskHeight: 0.07,
             diskNoiseScale: 0.22,
@@ -119,8 +119,52 @@ export class LensingConfig {
             redshiftStrength: 1.0,
             colorShiftEnabled: 1.0,
             maxSteps: 250,
-            colorInner: { r: 0.85, g: 0.45, b: 0.1 },
-            colorOuter: { r: 0.4, g: 0.05, b: 0.02 },
+            colorInner: { r: 0.6, g: 0.8, b: 1.0 }, // Hot blue-white inner edge (scientifically accurate)
+            colorOuter: { r: 0.95, g: 0.4, b: 0.05 }, // Cooler orange outer edge
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
+        },
+        sgra: {
+            title: "Sagittarius A*",
+            schwarzschildRadius: 18.0,
+            blackHoleSpin: 0.85,
+            lensStrength: 0.65,
+            diskInnerRadius: 1.4,
+            diskOuterRadius: 10.0,
+            diskHeight: 0.18, // Thicker gas torus
+            diskNoiseScale: 0.25, // More turbulent plasma
+            diskNoiseSpeed: 0.90, // Fast orbit speed
+            diskOpacity: 0.15, // Translucent/optically thin
+            dopplerStrength: 0.85,
+            redshiftStrength: 0.90,
+            colorShiftEnabled: 1.0,
+            maxSteps: 300,
+            colorInner: { r: 1.0, g: 0.55, b: 0.1 }, // EHT false-color golden orange
+            colorOuter: { r: 0.8, g: 0.15, b: 0.05 }, // EHT false-color red-orange
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
+        },
+        kerr: {
+            title: "Kerr Extreme",
+            schwarzschildRadius: 22.0,
+            blackHoleSpin: 0.99,
+            lensStrength: 0.85,
+            diskInnerRadius: 0.75,
+            diskOuterRadius: 11.0,
+            diskHeight: 0.04,
+            diskNoiseScale: 0.18,
+            diskNoiseSpeed: 1.10,
+            diskOpacity: 0.75,
+            dopplerStrength: 1.0,
+            redshiftStrength: 1.0,
+            colorShiftEnabled: 1.0,
+            maxSteps: 350,
+            colorInner: { r: 0.8, g: 0.2, b: 1.0 }, // Hot neon violet
+            colorOuter: { r: 0.1, g: 0.5, b: 0.9 }, // Neon cyan-blue
             atmosphereEnabled: 1.0,
             fpsLimitEnabled: 1.0,
             filmGrainEnabled: 1.0,
@@ -129,11 +173,11 @@ export class LensingConfig {
         gargantua: {
             title: "Artistic Gold",
             schwarzschildRadius: 24.0,
-            blackHoleSpin: 0.95,
+            blackHoleSpin: 0.99,
             lensStrength: 0.45,
-            diskInnerRadius: 3.2,
+            diskInnerRadius: 1.0,
             diskOuterRadius: 15.0,
-            diskHeight: 0.03,
+            diskHeight: 0.02,
             diskNoiseScale: 0.12,
             diskNoiseSpeed: 0.85,
             diskOpacity: 0.6,
