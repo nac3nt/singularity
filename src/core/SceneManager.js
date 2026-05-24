@@ -42,7 +42,9 @@ export class SceneManager {
             maxSteps: defaultPreset.maxSteps,
             colorInner: { ...defaultPreset.colorInner },
             colorOuter: { ...defaultPreset.colorOuter },
-            renderScale: 1.00
+            renderScale: 1.00,
+            invertHorizontal: 1.0,
+            invertVertical: 0.0
         };
 
         this.fxaaPostProcess = null;
@@ -142,7 +144,12 @@ export class SceneManager {
         this.camera.upperRadiusLimit = LensingConfig.CAMERA.MAX_RADIUS;
         this.camera.panningOriginTarget = Vector3.Zero();
         this.camera.panningInertia = 0.8;
-        this.camera.panningAxis = new Vector3(1, 1, 0);
+        
+        const invHoriz = this.settings.invertHorizontal > 0.5;
+        const invVert = this.settings.invertVertical > 0.5;
+        this.camera.panningAxis = new Vector3(invHoriz ? -1 : 1, invVert ? -1 : 1, 0);
+        this.camera.angularSensibilityX = (invHoriz ? -1 : 1) * 1000.0;
+        this.camera.angularSensibilityY = (invVert ? -1 : 1) * 1000.0;
 
         // Adjust mouse/scroll sensitivity
         this.camera.panningSensibility = 1000 / LensingConfig.CAMERA.PAN_SENSITIVITY;
@@ -324,6 +331,22 @@ export class SceneManager {
         bindToggle('fpsLimitToggle', 'fpsLimitEnabled');
         bindToggle('filmGrainToggle', 'filmGrainEnabled');
         bindToggle('fxaaToggle', 'fxaaEnabled', () => this.updatePostProcesses());
+        bindToggle('invertHorizontalToggle', 'invertHorizontal', (checked) => {
+            if (this.camera) {
+                const multX = checked ? -1 : 1;
+                const multY = this.settings.invertVertical > 0.5 ? -1 : 1;
+                this.camera.panningAxis = new Vector3(multX, multY, 0);
+                this.camera.angularSensibilityX = multX * 1000.0;
+            }
+        });
+        bindToggle('invertVerticalToggle', 'invertVertical', (checked) => {
+            if (this.camera) {
+                const multX = this.settings.invertHorizontal > 0.5 ? -1 : 1;
+                const multY = checked ? -1 : 1;
+                this.camera.panningAxis = new Vector3(multX, multY, 0);
+                this.camera.angularSensibilityY = multY * 1000.0;
+            }
+        });
 
         // Preset button array listeners
         const presetButtons = document.querySelectorAll('.btn-preset');
@@ -403,7 +426,7 @@ export class SceneManager {
         const preset = LensingConfig.PRESETS[key];
         if (!preset) return;
 
-        // Update settings properties
+        // Update settings properties (only Black Hole physics, Accretion Disk, and Relativistic Effects)
         this.settings.schwarzschildRadius = preset.schwarzschildRadius;
         this.settings.blackHoleSpin = preset.blackHoleSpin;
         this.settings.lensStrength = preset.lensStrength;
@@ -416,9 +439,6 @@ export class SceneManager {
         this.settings.dopplerStrength = preset.dopplerStrength;
         this.settings.redshiftStrength = preset.redshiftStrength;
         this.settings.colorShiftEnabled = preset.colorShiftEnabled;
-        this.settings.atmosphereEnabled = preset.atmosphereEnabled;
-        this.settings.fpsLimitEnabled = preset.fpsLimitEnabled !== undefined ? preset.fpsLimitEnabled : 1.0;
-        this.settings.maxSteps = preset.maxSteps;
         this.settings.colorInner = { ...preset.colorInner };
         this.settings.colorOuter = { ...preset.colorOuter };
 
@@ -439,10 +459,11 @@ export class SceneManager {
         updateSliderEl('diskSpeedSlider', 'diskSpeedVal', preset.diskNoiseSpeed);
         updateSliderEl('diskOpacitySlider', 'diskOpacityVal', preset.diskOpacity);
 
+        // Max Steps (Performance & Quality) survives preset changes, so update UI from settings, not preset
         const rayStepsSlider = document.getElementById('rayStepsSlider');
         const rayStepsVal = document.getElementById('rayStepsVal');
-        if (rayStepsSlider) rayStepsSlider.value = preset.maxSteps;
-        if (rayStepsVal) rayStepsVal.textContent = Math.round(preset.maxSteps);
+        if (rayStepsSlider) rayStepsSlider.value = this.settings.maxSteps;
+        if (rayStepsVal) rayStepsVal.textContent = Math.round(this.settings.maxSteps);
 
         const dopplerToggle = document.getElementById('dopplerToggle');
         if (dopplerToggle) dopplerToggle.checked = preset.dopplerStrength > 0.5;
@@ -453,8 +474,9 @@ export class SceneManager {
         const colorShiftToggle = document.getElementById('colorShiftToggle');
         if (colorShiftToggle) colorShiftToggle.checked = preset.colorShiftEnabled > 0.5;
 
+        // Atmosphere (Space Environment) survives preset changes, so update UI from settings, not preset
         const atmosphereToggle = document.getElementById('atmosphereToggle');
-        if (atmosphereToggle) atmosphereToggle.checked = preset.atmosphereEnabled > 0.5;
+        if (atmosphereToggle) atmosphereToggle.checked = this.settings.atmosphereEnabled > 0.5;
 
         const fpsLimitToggle = document.getElementById('fpsLimitToggle');
         if (fpsLimitToggle) fpsLimitToggle.checked = this.settings.fpsLimitEnabled > 0.5;

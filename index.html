@@ -210,13 +210,27 @@
 
           <!-- Camera Settings -->
           <div class="section" style="margin-bottom:0;">
-            <div class="section-title">Camera Views</div>
+            <div class="section-title">Camera Views & Controls</div>
             <div class="camera-row">
               <button class="btn-camera active" id="btnCamOrbit" data-view="cinematic">Orbit</button>
               <button class="btn-camera" id="btnCamEdge" data-view="edge">Edge</button>
               <button class="btn-camera" id="btnCamPolar" data-view="polar">Polar</button>
               <button class="btn-camera" id="btnCamDisk" data-view="disk">Disk</button>
               <button class="btn-camera" id="btnCamFree" data-view="free">Free</button>
+            </div>
+            <div class="toggle-group" style="margin-top: 15px;">
+              <span class="control-label" style="margin:0;">Invert Horizontal Control</span>
+              <label class="switch">
+                <input type="checkbox" id="invertHorizontalToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+            <div class="toggle-group" style="margin-top: 10px;">
+              <span class="control-label" style="margin:0;">Invert Vertical Control</span>
+              <label class="switch">
+                <input type="checkbox" id="invertVerticalToggle" />
+                <span class="slider-switch"></span>
+              </label>
             </div>
           </div>
         </div>
