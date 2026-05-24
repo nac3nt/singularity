@@ -32,7 +32,7 @@ export class BlackHole {
                 "diskNoiseScale", "diskNoiseSpeed",
                 "dopplerStrength", "redshiftStrength",
                 "maxSteps", "colorShiftEnabled",
-                "blackHoleSpin"
+                "blackHoleSpin", "atmosphereEnabled", "filmGrainEnabled"
             ],
             ["envTexture"],
             1.0,
@@ -105,6 +105,12 @@ export class BlackHole {
         effect.setFloat("dopplerStrength", dopplerStrength);
         effect.setFloat("redshiftStrength", redshiftStrength);
         effect.setFloat("colorShiftEnabled", colorShiftEnabled);
+
+        const atmosphereEnabled = settings ? settings.atmosphereEnabled : 1.0;
+        effect.setFloat("atmosphereEnabled", atmosphereEnabled);
+
+        const filmGrainEnabled = settings ? settings.filmGrainEnabled : 1.0;
+        effect.setFloat("filmGrainEnabled", filmGrainEnabled);
 
         // Performance clamping
         const maxSteps = settings ? settings.maxSteps : LensingConfig.PERFORMANCE.MAX_STEPS;

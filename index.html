@@ -154,6 +154,25 @@
             </div>
           </div>
 
+          <!-- Space Environment -->
+          <div class="section">
+            <div class="section-title">Space Environment</div>
+            <div class="toggle-group">
+              <span class="control-label" style="margin:0;">Atmospheric Twinkle</span>
+              <label class="switch">
+                <input type="checkbox" id="atmosphereToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+            <div class="toggle-group" style="margin-top: 10px;">
+              <span class="control-label" style="margin:0;">Film Grain Texture</span>
+              <label class="switch">
+                <input type="checkbox" id="filmGrainToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+          </div>
+
           <!-- Quality & Performance -->
           <div class="section">
             <div class="section-title">Performance & Quality</div>
@@ -170,6 +189,20 @@
                 <span id="rayStepsVal" class="control-value">500</span>
               </div>
               <input type="range" id="rayStepsSlider" min="200" max="500" step="10" value="500" />
+            </div>
+            <div class="toggle-group" style="margin-top: 15px;">
+              <span class="control-label" style="margin:0;">Limit FPS (60 FPS)</span>
+              <label class="switch">
+                <input type="checkbox" id="fpsLimitToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
+            </div>
+            <div class="toggle-group" style="margin-top: 10px;">
+              <span class="control-label" style="margin:0;">Post-Process Anti-Aliasing (FXAA)</span>
+              <label class="switch">
+                <input type="checkbox" id="fxaaToggle" checked />
+                <span class="slider-switch"></span>
+              </label>
             </div>
           </div>
 

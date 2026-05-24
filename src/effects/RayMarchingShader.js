@@ -33,6 +33,8 @@ export class RayMarchingShader {
       uniform float colorShiftEnabled;
       uniform float blackHoleSpin;
       uniform float lensStrength;
+      uniform float atmosphereEnabled;
+      uniform float filmGrainEnabled;
 
       // Constants
       #define MAX_STEPS 500
@@ -193,17 +195,32 @@ export class RayMarchingShader {
           return resultColor;
       }
 
-      // Subtle white nebula wisps (procedural)
+      // Rich multi-chromatic procedural nebula (cosmic dust & gas)
       vec3 renderNebula(vec3 dir) {
-          vec3 p = dir * 2.0;
-          float cloud = fbm(p.xy * 0.4 + p.z * 0.3);
-          cloud = cloud * 0.7 + fbm(p.zy * 0.6 + p.x * 0.4 + 20.0) * 0.3;
-          cloud = pow(cloud * 0.6 + 0.4, 1.5);
-          float white = cloud * 0.05;
-          return vec3(white);
+          vec3 p = dir * 2.5;
+          
+          // Layer 1: Base gas density
+          float n1 = fbm(p.xy * 0.3 + p.z * 0.2);
+          // Layer 2: Fine structures and turbulence
+          float n2 = fbm(p.zy * 0.5 + p.x * 0.3 + vec2(12.3, 45.6));
+          
+          float density = n1 * 0.65 + n2 * 0.35;
+          density = pow(density, 2.4); // Sharpen boundaries & increase contrast
+          
+          // Color palettes based on FBM coordinates and density
+          vec3 col1 = vec3(0.08, 0.01, 0.18); // Deep space violet
+          vec3 col2 = vec3(0.0, 0.35, 0.45);  // Teal ionized hydrogen
+          vec3 col3 = vec3(0.45, 0.08, 0.22); // Magenta dust lanes
+          
+          // Interpolate colors based on noise patterns
+          vec3 gasColor = mix(col1, col2, n1);
+          gasColor = mix(gasColor, col3, n2 * 0.8);
+          
+          // Apply density mask and boost glow intensity (from 0.45 to 0.85)
+          return gasColor * density * 0.85;
       }
 
-      // Highly realistic lensed starfield with O, B, A, F, G, K, M spectral colors
+      // Highly realistic lensed starfield with galactic density, diffraction spikes, and atmospheric control
       vec3 renderStars(vec3 rd) {
           vec3 color = vec3(0.0);
           
@@ -219,8 +236,14 @@ export class RayMarchingShader {
               float h2 = hash3(ip + vec3(17.31, 31.42, 59.83));
               float h3 = hash3(ip + vec3(93.12, 11.23, 47.92));
               
+              // Modulation of star density based on galactic equator distance
+              vec3 cellDir = normalize(ip + vec3(0.5));
+              float distToEquator = abs(dot(cellDir, normalize(vec3(0.18, 0.96, 0.18))));
+              float densityMod = exp(-distToEquator * 3.5);
+              float threshold = 0.998 - 0.022 * densityMod;
+              
               // Only draw if we hit the spawn threshold (sparse distribution)
-              if (h1 > 0.985) {
+              if (h1 > threshold) {
                   vec3 offset = vec3(h1, h2, h3);
                   vec3 pos = fp - offset;
                   float d = length(pos);
@@ -246,11 +269,36 @@ export class RayMarchingShader {
                           starColor = vec3(1.0, 0.38, 0.18); // M: Cool red-orange
                       }
                       
-                      // Twinkle animation
-                      float twinkleSpeed = 2.0 + h1 * 4.0;
-                      float twinkle = 0.5 + 0.5 * sin(time * twinkleSpeed + h2 * 10.0);
+                      // Atmospheric or Space Twinkle animation
+                      float twinkle = 1.0;
+                      if (atmosphereEnabled > 0.5) {
+                          float twinkleSpeed = 2.0 + h1 * 4.0;
+                          twinkle = 0.4 + 0.6 * sin(time * twinkleSpeed + h2 * 10.0);
+                      } else {
+                          // Space mode: stable stars (with extremely subtle physical sensor shimmer)
+                          twinkle = 0.96 + 0.04 * sin(time * 0.5 + h2 * 10.0);
+                      }
                       
-                      color += starColor * star * twinkle * 2.0;
+                      // Add diffraction spikes for very bright stars
+                      if (h2 > 0.88) {
+                          // Project the displacement onto the plane perpendicular to the ray direction
+                          vec3 r_proj = pos - dot(pos, rd) * rd;
+                          
+                          // Establish perpendicular coordinate system on the tangent plane
+                          vec3 right = normalize(cross(rd, vec3(0.0, 1.0, 0.001)));
+                          vec3 up = cross(right, rd);
+                          
+                          float x = dot(r_proj, right);
+                          float y = dot(r_proj, up);
+                          
+                          float spikeScale = size * 7.0;
+                          float spike1 = smoothstep(0.002, 0.0, abs(x)) * smoothstep(spikeScale, 0.0, abs(y));
+                          float spike2 = smoothstep(0.002, 0.0, abs(y)) * smoothstep(spikeScale, 0.0, abs(x));
+                          
+                          star += (spike1 + spike2) * 0.5 * h2;
+                      }
+                      
+                      color += starColor * star * twinkle * 3.2;
                   }
               }
           }
@@ -354,6 +402,8 @@ export class RayMarchingShader {
           if (!hitHorizon && diskAlpha < 0.99) {
               // Full environmental HDR texture (gives bright space colors for clear lensing)
               vec3 bg = textureCube(envTexture, rd).rgb;
+              bg = bg * 1.6; // Scale brightness
+              bg = pow(bg, vec3(1.15)); // Adjust contrast
               
               // Procedural stars (lensed by bent light rays)
               vec3 stars = renderStars(rd);
@@ -367,6 +417,14 @@ export class RayMarchingShader {
               col = finalSpace * (1.0 - diskAlpha) + diskCol * 0.35;
           } else {
               col = diskCol * 0.35;
+          }
+
+          // Procedural film grain (very cheap, eliminates color banding in dark space)
+          if (filmGrainEnabled > 0.5) {
+              // High-frequency isotropic white noise changing chaotically every frame to avoid striping
+              vec2 seed = gl_FragCoord.xy + vec2(sin(time * 9.1), cos(time * 15.3)) * 100.0;
+              float grain = fract(sin(dot(seed, vec2(12.9898, 78.233))) * 43758.5453);
+              col += vec3(grain - 0.5) * 0.035;
           }
 
           gl_FragColor = vec4(col, 1.0);

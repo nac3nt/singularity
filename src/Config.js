@@ -6,7 +6,9 @@ export class LensingConfig {
 
     static BACKGROUND = {
         SPHERE_DIAMETER: 2000,
-        SPHERE_SEGMENTS: 32
+        SPHERE_SEGMENTS: 32,
+        ATMOSPHERE_ENABLED: 1.0,
+        FILM_GRAIN_ENABLED: 1.0
     };
 
     static CAMERA = {
@@ -71,10 +73,12 @@ export class LensingConfig {
 
     static PERFORMANCE = {
         TARGET_FPS: 60,
+        FPS_LIMIT_ENABLED: 1.0,
         ADAPTIVE_QUALITY: true,
         LOD_DISTANCE_THRESHOLD: 100,
         RENDER_SCALE: 1.0,
-        MAX_STEPS: 250
+        MAX_STEPS: 250,
+        FXAA_ENABLED: 0.0
     };
 
     static PRESETS = {
@@ -94,7 +98,11 @@ export class LensingConfig {
             colorShiftEnabled: 1.0,
             maxSteps: 250,
             colorInner: { r: 0.9, g: 0.85, b: 0.6 },
-            colorOuter: { r: 0.6, g: 0.15, b: 0.05 }
+            colorOuter: { r: 0.6, g: 0.15, b: 0.05 },
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
         },
         stellar: {
             title: "Stellar-Mass",
@@ -112,7 +120,11 @@ export class LensingConfig {
             colorShiftEnabled: 1.0,
             maxSteps: 250,
             colorInner: { r: 0.85, g: 0.45, b: 0.1 },
-            colorOuter: { r: 0.4, g: 0.05, b: 0.02 }
+            colorOuter: { r: 0.4, g: 0.05, b: 0.02 },
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
         },
         gargantua: {
             title: "Artistic Gold",
@@ -130,7 +142,11 @@ export class LensingConfig {
             colorShiftEnabled: 0.0,
             maxSteps: 250,
             colorInner: { r: 0.95, g: 0.8, b: 0.4 },
-            colorOuter: { r: 0.8, g: 0.45, b: 0.15 }
+            colorOuter: { r: 0.8, g: 0.45, b: 0.15 },
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
         },
         scientific: {
             title: "Scientific Grid",
@@ -148,7 +164,11 @@ export class LensingConfig {
             colorShiftEnabled: 0.0,
             maxSteps: 200,
             colorInner: { r: 0.4, g: 0.7, b: 1.0 },
-            colorOuter: { r: 0.1, g: 0.3, b: 0.6 }
+            colorOuter: { r: 0.1, g: 0.3, b: 0.6 },
+            atmosphereEnabled: 1.0,
+            fpsLimitEnabled: 1.0,
+            filmGrainEnabled: 1.0,
+            fxaaEnabled: 0.0
         }
     };
 }

@@ -1,6 +1,6 @@
 import {
     Engine, Scene, ArcRotateCamera, Vector3,
-    HDRCubeTexture
+    HDRCubeTexture, FxaaPostProcess
 } from 'babylonjs';
 import { LensingConfig } from '../Config.js';
 import { PerformanceMonitor } from '../utils/PerformanceMonitor.js';
@@ -34,12 +34,17 @@ export class SceneManager {
             dopplerStrength: 1.0,
             redshiftStrength: 1.0,
             colorShiftEnabled: 1.0,
+            atmosphereEnabled: LensingConfig.BACKGROUND.ATMOSPHERE_ENABLED,
+            fpsLimitEnabled: LensingConfig.PERFORMANCE.FPS_LIMIT_ENABLED,
+            filmGrainEnabled: LensingConfig.BACKGROUND.FILM_GRAIN_ENABLED,
+            fxaaEnabled: LensingConfig.PERFORMANCE.FXAA_ENABLED,
             maxSteps: 500,
             colorInner: { ...LensingConfig.PRESETS.quasar.colorInner },
             colorOuter: { ...LensingConfig.PRESETS.quasar.colorOuter },
             renderScale: 1.00
         };
 
+        this.fxaaPostProcess = null;
         this.initialize();
     }
 
@@ -105,6 +110,7 @@ export class SceneManager {
         this.blackHole = new BlackHole(this.scene, this.camera, this.engine, this);
 
         this.setupAnimations();
+        this.updatePostProcesses();
     }
 
     setupEnvironment() {
@@ -299,12 +305,13 @@ export class SceneManager {
         }
 
         // Helper to link check-toggles
-        const bindToggle = (id, key) => {
+        const bindToggle = (id, key, onChange = null) => {
             const toggle = document.getElementById(id);
             if (toggle) {
                 toggle.checked = this.settings[key] > 0.5;
                 toggle.addEventListener('change', (e) => {
                     this.settings[key] = e.target.checked ? 1.0 : 0.0;
+                    if (onChange) onChange(e.target.checked);
                 });
             }
         };
@@ -312,6 +319,10 @@ export class SceneManager {
         bindToggle('dopplerToggle', 'dopplerStrength');
         bindToggle('redshiftToggle', 'redshiftStrength');
         bindToggle('colorShiftToggle', 'colorShiftEnabled');
+        bindToggle('atmosphereToggle', 'atmosphereEnabled');
+        bindToggle('fpsLimitToggle', 'fpsLimitEnabled');
+        bindToggle('filmGrainToggle', 'filmGrainEnabled');
+        bindToggle('fxaaToggle', 'fxaaEnabled', () => this.updatePostProcesses());
 
         // Preset button array listeners
         const presetButtons = document.querySelectorAll('.btn-preset');
@@ -394,6 +405,8 @@ export class SceneManager {
         this.settings.dopplerStrength = preset.dopplerStrength;
         this.settings.redshiftStrength = preset.redshiftStrength;
         this.settings.colorShiftEnabled = preset.colorShiftEnabled;
+        this.settings.atmosphereEnabled = preset.atmosphereEnabled;
+        this.settings.fpsLimitEnabled = preset.fpsLimitEnabled !== undefined ? preset.fpsLimitEnabled : 1.0;
         this.settings.maxSteps = preset.maxSteps;
         this.settings.colorInner = { ...preset.colorInner };
         this.settings.colorOuter = { ...preset.colorOuter };
@@ -428,6 +441,36 @@ export class SceneManager {
 
         const colorShiftToggle = document.getElementById('colorShiftToggle');
         if (colorShiftToggle) colorShiftToggle.checked = preset.colorShiftEnabled > 0.5;
+
+        const atmosphereToggle = document.getElementById('atmosphereToggle');
+        if (atmosphereToggle) atmosphereToggle.checked = preset.atmosphereEnabled > 0.5;
+
+        const fpsLimitToggle = document.getElementById('fpsLimitToggle');
+        if (fpsLimitToggle) fpsLimitToggle.checked = this.settings.fpsLimitEnabled > 0.5;
+
+        const filmGrainToggle = document.getElementById('filmGrainToggle');
+        if (filmGrainToggle) filmGrainToggle.checked = this.settings.filmGrainEnabled > 0.5;
+
+        const fxaaToggle = document.getElementById('fxaaToggle');
+        if (fxaaToggle) fxaaToggle.checked = this.settings.fxaaEnabled > 0.5;
+
+        this.updatePostProcesses();
+    }
+
+    updatePostProcesses() {
+        if (!this.camera) return;
+        
+        const shouldEnable = this.settings.fxaaEnabled > 0.5;
+        if (shouldEnable) {
+            if (!this.fxaaPostProcess) {
+                this.fxaaPostProcess = new FxaaPostProcess("fxaa", 1.0, this.camera);
+            }
+        } else {
+            if (this.fxaaPostProcess) {
+                this.fxaaPostProcess.dispose(this.camera);
+                this.fxaaPostProcess = null;
+            }
+        }
     }
 
     handleKeyPress(event) {
@@ -469,11 +512,12 @@ export class SceneManager {
                 
                 // 2. Framerate throttling regulator
                 const elapsed = now - this.lastFrameTime;
-                const targetInterval = 1000.0 / this.fpsCap;
+                const limitFps = this.settings.fpsLimitEnabled > 0.5;
+                const targetInterval = limitFps ? (1000.0 / this.fpsCap) : (this.isIdle ? 1000.0 / 35.0 : 0.0);
                 
                 if (elapsed >= targetInterval) {
                     // Update frame reference timestamp
-                    this.lastFrameTime = now - (elapsed % targetInterval);
+                    this.lastFrameTime = now - (limitFps || this.isIdle ? (elapsed % targetInterval) : 0.0);
                     
                     // Render frame
                     this.scene.render();
@@ -485,6 +529,10 @@ export class SceneManager {
     }
 
     dispose() {
+        if (this.fxaaPostProcess) {
+            this.fxaaPostProcess.dispose(this.camera);
+            this.fxaaPostProcess = null;
+        }
         if (this.scene) {
             this.scene.dispose();
         }
