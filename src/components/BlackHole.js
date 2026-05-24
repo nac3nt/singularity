@@ -11,6 +11,7 @@ export class BlackHole {
         this.mesh = null;
         this.postProcess = null;
         this.time = 0;
+        this.diskTime = 0;
 
         this.createBlackHole();
     }
@@ -24,7 +25,7 @@ export class BlackHole {
             "blackHoleRayMarch",
             "blackHoleRayMarch",
             [
-                "time", "resolution", "cameraPosition", "cameraTarget", "cameraUp",
+                "time", "diskTime", "resolution", "cameraPosition", "cameraTarget", "cameraUp",
                 "cameraTanHalfFov", "schwarzschildRadius", "lensStrength",
                 "diskInnerRadius", "diskOuterRadius", "diskHeight",
                 "diskColorInner", "diskColorOuter", "diskOpacity",
@@ -38,8 +39,6 @@ export class BlackHole {
             this.camera
         );
 
-        this.postProcess.enabled = false;
-
         this.postProcess.onApply = (effect) => {
             this.updateUniforms(effect);
         };
@@ -51,6 +50,7 @@ export class BlackHole {
 
         // Camera uniforms
         effect.setFloat("time", this.time);
+        effect.setFloat("diskTime", this.diskTime);
         effect.setFloat2("resolution", this.engine.getRenderWidth(), this.engine.getRenderHeight());
         effect.setVector3("cameraPosition", this.camera.position);
         effect.setVector3("cameraTarget", this.camera.target);
@@ -114,6 +114,13 @@ export class BlackHole {
     update(deltaTime) {
         // Increment uniform time counter
         this.time += deltaTime * 0.001;
+
+        // Fetch dynamic settings from SceneManager or fall back to LensingConfig
+        const settings = this.sceneManager ? this.sceneManager.settings : null;
+        const diskNoiseSpeed = settings ? settings.diskNoiseSpeed : LensingConfig.ACCRETION_DISK.NOISE_SPEED;
+        
+        // Accumulate disk time scaled by gas swirl speed
+        this.diskTime += deltaTime * 0.001 * diskNoiseSpeed;
     }
 
     dispose() {

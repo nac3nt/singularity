@@ -50,42 +50,47 @@ export class SceneManager {
         this.setupUIBindings();
         
         // Set initial camera animation states
-        this.isDriftingCamera = true;
+        this.isDriftingCamera = false;
         this.isTransitioningCamera = false;
 
-        // Start rendering immediately so the space skybox is visible during load
-        this.startRenderLoop();
-        
         if (this.scene) {
             this.scene.executeWhenReady(() => {
-                // Enable the black hole raymarching post-process
-                if (this.blackHole && this.blackHole.postProcess) {
-                    this.blackHole.postProcess.enabled = true;
-                }
-
-                // Disable the skybox mesh to save rendering performance
-                if (this.spaceSkybox) {
-                    this.spaceSkybox.setEnabled(false);
-                }
-
                 const loader = document.getElementById('loadingOverlay');
+                const canvas = document.getElementById('renderCanvas');
                 const ui = document.querySelector('.ui-overlay');
 
+                // Fade in the render canvas
+                if (canvas) {
+                    canvas.classList.add('ready');
+                }
+
+                // Fade the loader background to transparent, revealing the black hole behind it
                 if (loader) {
-                    loader.classList.add('fade-out');
-                }
-                if (ui) {
-                    ui.classList.add('ready');
+                    loader.classList.add('bg-transparent');
                 }
 
-                // Normalize alpha to the nearest [-PI, PI] range for the shortest transition path
-                const twoPi = 2 * Math.PI;
-                this.camera.alpha = this.camera.alpha - twoPi * Math.round(this.camera.alpha / twoPi);
+                // Start rendering loop immediately (shaders are compiled, so it's smooth!)
+                this.startRenderLoop();
 
-                // Trigger smooth camera transition to focus on the black hole
-                this.isDriftingCamera = false;
-                this.isTransitioningCamera = true;
+                // Slow drift in the top-down view during the 2-second showcase
+                this.isDriftingCamera = true;
+
+                // Wait 2 seconds showing the top-down black hole under the shimmering text
+                setTimeout(() => {
+                    if (loader) {
+                        loader.classList.add('fade-out');
+                    }
+                    if (ui) {
+                        ui.classList.add('ready');
+                    }
+
+                    // Stop top drift and start transition to focus on the black hole in orbit view
+                    this.isDriftingCamera = false;
+                    this.isTransitioningCamera = true;
+                }, 2000);
             });
+        } else {
+            this.startRenderLoop();
         }
     }
 
@@ -107,9 +112,6 @@ export class SceneManager {
             const hdrTexture = new HDRCubeTexture(LensingConfig.HDR.TEXTURE_PATH, this.scene, LensingConfig.HDR.TEXTURE_SIZE);
             this.scene.environmentTexture = hdrTexture;
             this.scene.environmentIntensity = LensingConfig.LIGHTING.ENVIRONMENT_INTENSITY;
-
-            // Create a background skybox mesh using the environment texture
-            this.spaceSkybox = this.scene.createDefaultSkybox(hdrTexture, true, 1000, 0.1);
         } catch (error) {
             console.warn('HDR texture loading failed:', error);
         }
@@ -143,10 +145,24 @@ export class SceneManager {
 
 
     setupAnimations() {
+        let lastFpsUpdate = 0;
         this.scene.registerBeforeRender(() => {
             const deltaTime = this.engine.getDeltaTime();
             this.performanceMonitor.update();
             this.blackHole.update(deltaTime);
+
+            // Update FPS display once per second if the panel is open
+            const now = performance.now();
+            if (now - lastFpsUpdate >= 1000) {
+                const controlPanel = document.getElementById('controlPanel');
+                if (controlPanel && !controlPanel.classList.contains('collapsed')) {
+                    const fpsCounter = document.getElementById('fpsCounter');
+                    if (fpsCounter) {
+                        fpsCounter.textContent = `${this.performanceMonitor.getFPS()} FPS`;
+                    }
+                }
+                lastFpsUpdate = now;
+            }
 
             // Handle Camera Drift during loading
             if (this.isDriftingCamera) {
@@ -157,7 +173,7 @@ export class SceneManager {
             if (this.isTransitioningCamera) {
                 const targetValues = {
                     alpha: 0.0,
-                    beta: Math.PI / 2.15,
+                    beta: Math.PI / 2.3, // Lowered orbit view
                     radius: 450
                 };
 
@@ -177,6 +193,11 @@ export class SceneManager {
                     this.camera.beta = targetValues.beta;
                     this.camera.radius = targetValues.radius;
                     this.isTransitioningCamera = false;
+
+                    // Automatically enable auto-orbit behavior by default
+                    this.camera.useAutoRotationBehavior = true;
+                    this.camera.autoRotationBehavior.idleRotationSpeed = 0.05;
+                    this.updateCamButtonState('btnCamOrbit');
                 }
             }
         });
@@ -304,13 +325,6 @@ export class SceneManager {
         });
 
         // Camera viewpoint buttons listeners
-        const camButtons = document.querySelectorAll('.btn-camera');
-        const updateCamButtonState = (activeId) => {
-            camButtons.forEach(btn => btn.classList.remove('active'));
-            const activeBtn = document.getElementById(activeId);
-            if (activeBtn) activeBtn.classList.add('active');
-        };
-
         const btnCamOrbit = document.getElementById('btnCamOrbit');
         const btnCamEdge = document.getElementById('btnCamEdge');
         const btnCamPolar = document.getElementById('btnCamPolar');
@@ -318,16 +332,16 @@ export class SceneManager {
 
         if (btnCamOrbit) {
             btnCamOrbit.addEventListener('click', () => {
-                updateCamButtonState('btnCamOrbit');
+                this.updateCamButtonState('btnCamOrbit');
                 this.camera.useAutoRotationBehavior = true;
                 this.camera.autoRotationBehavior.idleRotationSpeed = 0.05;
-                this.camera.beta = Math.PI / 2.8;
+                this.camera.beta = Math.PI / 2.3; // Lowered Y-angle
                 this.camera.radius = 450;
             });
         }
         if (btnCamEdge) {
             btnCamEdge.addEventListener('click', () => {
-                updateCamButtonState('btnCamEdge');
+                this.updateCamButtonState('btnCamEdge');
                 this.camera.useAutoRotationBehavior = false;
                 this.camera.alpha = 0;
                 this.camera.beta = Math.PI / 2;
@@ -336,7 +350,7 @@ export class SceneManager {
         }
         if (btnCamPolar) {
             btnCamPolar.addEventListener('click', () => {
-                updateCamButtonState('btnCamPolar');
+                this.updateCamButtonState('btnCamPolar');
                 this.camera.useAutoRotationBehavior = false;
                 this.camera.alpha = Math.PI / 2;
                 this.camera.beta = 0.01;
@@ -345,7 +359,7 @@ export class SceneManager {
         }
         if (btnCamReset) {
             btnCamReset.addEventListener('click', () => {
-                updateCamButtonState('btnCamReset');
+                this.updateCamButtonState('btnCamReset');
                 this.camera.useAutoRotationBehavior = false;
                 this.camera.alpha = 0.0;
                 this.camera.beta = Math.PI / 2.15;
@@ -358,7 +372,7 @@ export class SceneManager {
         this.canvas.addEventListener('pointerdown', () => {
             if (this.camera && this.camera.useAutoRotationBehavior) {
                 this.camera.useAutoRotationBehavior = false;
-                camButtons.forEach(btn => btn.classList.remove('active'));
+                this.updateCamButtonState('');
             }
         });
     }
@@ -433,6 +447,13 @@ export class SceneManager {
                     this.scene.debugLayer.show();
                 break;
         }
+    }
+
+    updateCamButtonState(activeId) {
+        const camButtons = document.querySelectorAll('.btn-camera');
+        camButtons.forEach(btn => btn.classList.remove('active'));
+        const activeBtn = document.getElementById(activeId);
+        if (activeBtn) activeBtn.classList.add('active');
     }
 
     startRenderLoop() {

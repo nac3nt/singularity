@@ -3,12 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Relativistic Black Hole & Lensing Simulation</title>
+    <title>Singularity - Relativistic Black Hole & Lensing Simulation</title>
     <link rel="stylesheet" href="/src/index.css" />
     <style>
       /* Prevent Flash of Unstyled Content (FOUC) */
-      .ui-overlay {
+      .ui-overlay, #renderCanvas {
         opacity: 0;
+      }
+      .ui-overlay {
         visibility: hidden;
       }
       .loading-overlay {
@@ -17,9 +19,8 @@
         left: 0;
         width: 100vw;
         height: 100vh;
-        background: transparent;
+        background: #030305;
         z-index: 1000;
-        pointer-events: none;
       }
     </style>
   </head>
@@ -42,7 +43,10 @@
       <!-- Main Panel -->
       <div id="controlPanel" class="control-panel collapsed">
         <div class="panel-header">
-          <h1 class="panel-title">Singularity</h1>
+          <div class="panel-header-top">
+            <h1 class="panel-title">Singularity</h1>
+            <span id="fpsCounter" class="fps-badge">-- FPS</span>
+          </div>
           <p class="panel-subtitle">Relativistic Simulation</p>
         </div>
 
@@ -173,7 +177,7 @@
           <div class="section" style="margin-bottom:0;">
             <div class="section-title">Camera Views</div>
             <div class="camera-row">
-              <button class="btn-camera" id="btnCamOrbit" data-view="cinematic">Orbit</button>
+              <button class="btn-camera active" id="btnCamOrbit" data-view="cinematic">Orbit</button>
               <button class="btn-camera" id="btnCamEdge" data-view="edge">Edge</button>
               <button class="btn-camera" id="btnCamPolar" data-view="polar">Polar</button>
               <button class="btn-camera" id="btnCamReset" data-view="reset">Reset</button>

@@ -7,6 +7,7 @@ export class RayMarchingShader {
 
       // Uniforms
       uniform float time;
+      uniform float diskTime;
       uniform vec2 resolution;
       uniform vec3 cameraPosition;
       uniform vec3 cameraTarget;
@@ -106,11 +107,12 @@ export class RayMarchingShader {
           if (abs(p.y) > localHeight) return 0.0;
 
           // Differential rotation angle (Keplerian shearing: inner parts rotate faster)
-          // The rotation angle decays as 1/sqrt(r) to match Kepler's orbital velocity
-          // We add an initial offset proportional to the swirl speed so that at startup
-          // the disk is already sheared/wound into lines if speed is high.
-          float shearTimeOffset = 120.0 * diskNoiseSpeed;
-          float rotationAngle = (time + shearTimeOffset) * diskNoiseSpeed * sqrt(diskInnerRadius / max(r, 0.0001));
+          // The rotation angle decays as 1/sqrt(r) to match Kepler's orbital velocity.
+          // By separating the static shear offset (40.0) from the rotation phase (diskTime),
+          // we maintain a beautiful clumpy cloud shape that doesn't degenerate into lines
+          // when changing the swirl speed, while diskTime directly controls the rotation rate.
+          float KeplerianShear = 40.0 * sqrt(diskInnerRadius / max(r, 0.0001));
+          float rotationAngle = KeplerianShear + diskTime;
           
           float c = cos(rotationAngle);
           float s = sin(rotationAngle);
@@ -123,7 +125,7 @@ export class RayMarchingShader {
           vec2 uv = swirledXZ * diskNoiseScale;
           
           float w1 = fbm(uv);
-          float w2 = fbm(uv + vec2(w1, time * 0.05));
+          float w2 = fbm(uv + vec2(w1, diskTime * 0.05));
           float noiseVal = fbm(uv + vec2(w2 * 1.5, w1 * 0.4));
           
           // Contrast enhancement: sharpens highlights and deepens dark gas lanes
