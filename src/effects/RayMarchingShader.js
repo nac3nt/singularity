@@ -35,6 +35,9 @@ export class RayMarchingShader {
       uniform float lensStrength;
       uniform float atmosphereEnabled;
       uniform float filmGrainEnabled;
+      uniform float invDiskWidth;
+      uniform float sqrtDiskInnerRadius;
+      uniform float sqrtHalfRs;
 
       // Constants
       #define MAX_STEPS 500
@@ -71,6 +74,28 @@ export class RayMarchingShader {
           return v;
       }
 
+      float fbm3(vec2 p) {
+          float v = 0.0;
+          float a = 0.5;
+          for (int i = 0; i < 3; i++) {
+              v += a * noise(p);
+              p *= 2.0;
+              a *= 0.5;
+          }
+          return v;
+      }
+
+      float fbm4(vec2 p) {
+          float v = 0.0;
+          float a = 0.5;
+          for (int i = 0; i < 4; i++) {
+              v += a * noise(p);
+              p *= 2.0;
+              a *= 0.5;
+          }
+          return v;
+      }
+
       float hash3(vec3 p) {
           p = fract(p * vec3(123.34, 456.21, 789.43));
           p += dot(p, p + 45.32);
@@ -96,7 +121,7 @@ export class RayMarchingShader {
 
       // Disk height tapers from thick at inner edge to thin at outer edge
       float getLocalDiskHeight(float r) {
-          float rNorm = clamp((r - diskInnerRadius) / (diskOuterRadius - diskInnerRadius), 0.0, 1.0);
+          float rNorm = clamp((r - diskInnerRadius) * invDiskWidth, 0.0, 1.0);
           return diskHeight * (1.0 - 0.8 * rNorm);
       }
 
@@ -109,11 +134,8 @@ export class RayMarchingShader {
           if (abs(p.y) > localHeight) return 0.0;
 
           // Differential rotation angle (Keplerian shearing: inner parts rotate faster)
-          // The rotation angle decays as 1/sqrt(r) to match Kepler's orbital velocity.
-          // By separating the static shear offset (40.0) from the rotation phase (diskTime),
-          // we maintain a beautiful clumpy cloud shape that doesn't degenerate into lines
-          // when changing the swirl speed, while diskTime directly controls the rotation rate.
-          float KeplerianShear = 40.0 * sqrt(diskInnerRadius / max(r, 0.0001));
+          // Optimized to avoid division and sqrt on the GPU
+          float KeplerianShear = 40.0 * sqrtDiskInnerRadius * inversesqrt(max(r, 0.0001));
           float rotationAngle = KeplerianShear + diskTime;
           
           float c = cos(rotationAngle);
@@ -126,9 +148,11 @@ export class RayMarchingShader {
           // Continuous Cartesian UV mapping (no polar coordinate angle wrapping seams!)
           vec2 uv = swirledXZ * diskNoiseScale;
           
-          float w1 = fbm(uv);
-          float w2 = fbm(uv + vec2(w1, diskTime * 0.05));
-          float noiseVal = fbm(uv + vec2(w2 * 1.5, w1 * 0.4));
+          // Reduced octave complexity for coordinate warping (3 octaves instead of 5)
+          float w1 = fbm3(uv);
+          float w2 = fbm3(uv + vec2(w1, diskTime * 0.05));
+          // Final density uses 4 octaves instead of 5
+          float noiseVal = fbm4(uv + vec2(w2 * 1.5, w1 * 0.4));
           
           // Contrast enhancement: sharpens highlights and deepens dark gas lanes
           noiseVal = smoothstep(0.12, 0.88, noiseVal);
@@ -137,7 +161,6 @@ export class RayMarchingShader {
           float innerFade = smoothstep(diskInnerRadius, diskInnerRadius + 1.5, r);
           
           // Gradual outer boundary fade spanning from the peak of the inner fade to the outer edge.
-          // We limit fadeStart to at least the halfway point of the disk to handle narrow disk settings robustly.
           float fadeStart = min(diskInnerRadius + 1.5, diskInnerRadius + 0.5 * (diskOuterRadius - diskInnerRadius));
           float outerFade = smoothstep(diskOuterRadius, fadeStart, r);
           
@@ -152,9 +175,9 @@ export class RayMarchingShader {
       vec3 applyRelativisticEffects(vec3 color, vec3 p, vec3 dir) {
           float r = length(p);
           
-          // True Keplerian velocity for Schwarzschild
-          float v = sqrt(0.5 * schwarzschildRadius / r); 
-          float gamma = 1.0 / sqrt(max(0.0001, 1.0 - v * v));
+          // True Keplerian velocity for Schwarzschild (optimized to avoid division and sqrt on GPU)
+          float v = sqrtHalfRs * inversesqrt(max(r, 0.0001)); 
+          float gamma = inversesqrt(max(0.0001, 1.0 - v * v));
           
           // Direction of disk rotation (counter-clockwise in XZ plane)
           vec3 flowDir = vec3(0.0);
@@ -168,7 +191,7 @@ export class RayMarchingShader {
           float doppler = 1.0 / max(0.0001, gamma * (1.0 - v * cosTheta));
           
           // Gravitational Time Dilation (Redshift)
-          float redshift = sqrt(max(0.0, 1.0 - schwarzschildRadius / r));
+          float redshift = sqrt(max(0.0, 1.0 - schwarzschildRadius / max(r, 0.0001)));
           
           // Total shift
           float totalShift = doppler * redshift;
@@ -348,22 +371,47 @@ export class RayMarchingShader {
               // Geodesic Light Bending (Exact Schwarzschild Geodesic Acceleration)
               vec3 h = cross(p, rd); // Angular momentum (conserved)
               float h2 = dot(h, h);
-              float r2 = r * r;
-              vec3 acceleration = -1.5 * schwarzschildRadius * p * h2 / max(r2 * r2 * r, 0.0001) * lensStrength;
+              
+              // CPU division elimination optimization inside loop:
+              // Replace 2 separate GPU divisions with a single reciprocal calculation
+              float invR = 1.0 / max(r, 0.0001);
+              float invR2 = invR * invR;
+              float invR3 = invR2 * invR;
+              float invR5 = invR2 * invR3;
+              
+              vec3 acceleration = -1.5 * schwarzschildRadius * p * h2 * invR5 * lensStrength;
               
               // Frame dragging (Lense-Thirring effect) pulling light in direction of spin (around Y-axis)
               vec3 spinAxis = vec3(0.0, 1.0, 0.0);
-              float dragFactor = 2.0 * blackHoleSpin / max(r2 * r, 0.0001);
+              float dragFactor = 2.0 * blackHoleSpin * invR3;
               vec3 dragForce = cross(spinAxis, p) * dragFactor;
               
               // Adaptive step size: shrink near photon sphere (1.5 Rs) for accuracy
-              // and limit near disk for precise volumetric density sampling
+              // and limit near disk for precise volumetric density sampling.
+              // Calculate the actual distance to the disk volume to avoid clamping step size at large radii.
               float distToPhotonSphere = abs(r - 1.5 * schwarzschildRadius);
               float localDiskHeight = (r > diskInnerRadius && r < diskOuterRadius) ? getLocalDiskHeight(r) : diskHeight;
-              float diskDist = max(0.0, abs(p.y) - localDiskHeight * 2.0);
-              float diskStepLimit = diskDist + localDiskHeight;
+              
+              float distToDisk = 0.0;
+              if (r > diskOuterRadius) {
+                  distToDisk = r - diskOuterRadius;
+              } else if (r < diskInnerRadius) {
+                  distToDisk = diskInnerRadius - r;
+              } else {
+                  distToDisk = max(0.0, abs(p.y) - localDiskHeight * 2.0);
+              }
+              
+              float diskStepLimit = distToDisk + localDiskHeight;
               float safeStep = max(0.1, min(distToPhotonSphere * 0.1, diskStepLimit));
-              float stepSize = min(safeStep, r * 0.05);
+              
+              // Ray escape step-size acceleration:
+              // If we are outside the disk's outer radius, traveling outward, and away from the disk midplane,
+              // we can take much larger step sizes because space is nearly flat here.
+              float stepFactor = 0.05;
+              if (r > diskOuterRadius && dot(p, rd) > 0.0 && abs(p.y) > localDiskHeight * 2.0) {
+                  stepFactor = 0.20;
+              }
+              float stepSize = min(safeStep, r * stepFactor);
               
               // Update direction and position (Semi-Implicit Euler step)
               rd = normalize(rd + (acceleration + dragForce) * stepSize);
@@ -373,15 +421,17 @@ export class RayMarchingShader {
               bool insideDisk = (checkHeight > 0.0 && abs(p.y) < checkHeight);
               
               if (insideDisk) {
-                  // Scale step size dynamically based on disk height to prevent step starvation (lag and black clipping)
-                  float diskStepSize = max(0.02, diskHeight * 0.12);
+                  // Scale step size dynamically based on disk height and ray vertical direction (angle)
+                  // to prevent step starvation for steep rays, while allowing fast traversal for edge-on rays.
+                  float diskStepSize = max(0.02, (diskHeight * 0.12) / max(abs(rd.y), 0.005));
                   stepSize = min(stepSize, diskStepSize);
                   
                   float stepDiskDensity = getDiskDensity(p) * stepSize;
                   
                   if (stepDiskDensity > 0.0005) {
                       // Temperature-based radial distribution approximating Novikov-Thorne temperature profile
-                      float t = (r - diskInnerRadius) / (diskOuterRadius - diskInnerRadius);
+                      // Optimized to use CPU-precomputed invDiskWidth
+                      float t = (r - diskInnerRadius) * invDiskWidth;
                       vec3 diskBaseColor = mix(diskColorInner, diskColorOuter, pow(max(t, 0.0), 0.75));
                       
                       // Apply Relativistic Effects & Doppler Wavelength shifting

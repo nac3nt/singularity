@@ -32,7 +32,8 @@ export class BlackHole {
                 "diskNoiseScale", "diskNoiseSpeed",
                 "dopplerStrength", "redshiftStrength",
                 "maxSteps", "colorShiftEnabled",
-                "blackHoleSpin", "atmosphereEnabled", "filmGrainEnabled"
+                "blackHoleSpin", "atmosphereEnabled", "filmGrainEnabled",
+                "invDiskWidth", "sqrtDiskInnerRadius", "sqrtHalfRs"
             ],
             ["envTexture"],
             1.0,
@@ -65,6 +66,7 @@ export class BlackHole {
         // Physical and Visual parameters (Dynamic or Static fallback)
         const rs = settings ? settings.schwarzschildRadius : (LensingConfig.BLACK_HOLE.WORLD_RADIUS * 2.0);
         effect.setFloat("schwarzschildRadius", rs);
+        effect.setFloat("sqrtHalfRs", Math.sqrt(0.5 * rs));
 
         const lensStrength = settings ? settings.lensStrength : LensingConfig.Lensing.STRENGTH;
         effect.setFloat("lensStrength", lensStrength);
@@ -78,9 +80,14 @@ export class BlackHole {
         const diskOuter = settings ? settings.diskOuterRadius : LensingConfig.ACCRETION_DISK.OUTER_RADIUS;
         const diskHeight = settings ? settings.diskHeight : LensingConfig.ACCRETION_DISK.HEIGHT;
 
-        effect.setFloat("diskInnerRadius", rs * diskInner);
-        effect.setFloat("diskOuterRadius", rs * diskOuter);
+        const wDiskInner = rs * diskInner;
+        const wDiskOuter = rs * diskOuter;
+        effect.setFloat("diskInnerRadius", wDiskInner);
+        effect.setFloat("diskOuterRadius", wDiskOuter);
         effect.setFloat("diskHeight", rs * diskHeight);
+
+        effect.setFloat("invDiskWidth", 1.0 / Math.max(0.0001, wDiskOuter - wDiskInner));
+        effect.setFloat("sqrtDiskInnerRadius", Math.sqrt(wDiskInner));
 
         // Accretion Disk Colors (RGB)
         const cInner = settings ? settings.colorInner : LensingConfig.ACCRETION_DISK.COLOR_INNER;
