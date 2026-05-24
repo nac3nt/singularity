@@ -340,7 +340,8 @@ export class SceneManager {
         const btnCamOrbit = document.getElementById('btnCamOrbit');
         const btnCamEdge = document.getElementById('btnCamEdge');
         const btnCamPolar = document.getElementById('btnCamPolar');
-        const btnCamReset = document.getElementById('btnCamReset');
+        const btnCamDisk = document.getElementById('btnCamDisk');
+        const btnCamFree = document.getElementById('btnCamFree');
 
         if (btnCamOrbit) {
             btnCamOrbit.addEventListener('click', () => {
@@ -369,24 +370,33 @@ export class SceneManager {
                 this.camera.radius = 400;
             });
         }
-        if (btnCamReset) {
-            btnCamReset.addEventListener('click', () => {
-                this.updateCamButtonState('btnCamReset');
+        if (btnCamDisk) {
+            btnCamDisk.addEventListener('click', () => {
+                this.updateCamButtonState('btnCamDisk');
                 this.camera.useAutoRotationBehavior = false;
                 this.camera.alpha = 0.0;
-                this.camera.beta = Math.PI / 2.15;
-                this.camera.radius = 450;
-                this.camera.setTarget(Vector3.Zero());
+                this.camera.beta = Math.PI / 2.02; // Standing directly inside the gas torus/disk range (horizon is at ~20)
+                this.camera.radius = 90;
+            });
+        }
+        if (btnCamFree) {
+            btnCamFree.addEventListener('click', () => {
+                this.updateCamButtonState('btnCamFree');
+                this.camera.useAutoRotationBehavior = false;
             });
         }
 
-        // Cancel camera auto-rotations when drag-orbiting is triggered
-        this.canvas.addEventListener('pointerdown', () => {
-            if (this.camera && this.camera.useAutoRotationBehavior) {
+        // Switch to 'Free' view and cancel any auto-rotation/transition behaviors as soon as user interacts
+        const switchToFreeView = () => {
+            this.isTransitioningCamera = false;
+            if (this.camera) {
                 this.camera.useAutoRotationBehavior = false;
-                this.updateCamButtonState('');
+                this.updateCamButtonState('btnCamFree');
             }
-        });
+        };
+
+        this.canvas.addEventListener('pointerdown', switchToFreeView);
+        this.canvas.addEventListener('wheel', switchToFreeView, { passive: true });
     }
 
     applyPreset(key) {
@@ -481,6 +491,9 @@ export class SceneManager {
                 this.camera.beta = Math.PI / 2.15;
                 this.camera.radius = 450;
                 this.camera.setTarget(Vector3.Zero());
+                this.camera.useAutoRotationBehavior = false;
+                this.isTransitioningCamera = false;
+                this.updateCamButtonState('btnCamFree');
                 break;
             case 'p':
                 console.log(`FPS: ${this.performanceMonitor.getFPS()}`);

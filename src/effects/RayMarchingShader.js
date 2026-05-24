@@ -272,11 +272,15 @@ export class RayMarchingShader {
                       // Atmospheric or Space Twinkle animation
                       float twinkle = 1.0;
                       if (atmosphereEnabled > 0.5) {
-                          float twinkleSpeed = 2.0 + h1 * 4.0;
-                          twinkle = 0.4 + 0.6 * sin(time * twinkleSpeed + h2 * 10.0);
+                          // Rapid atmospheric scintillation with varying frequency per star
+                          float twinkleSpeed = 4.0 + h1 * 6.0;
+                          float wave = sin(time * twinkleSpeed) * 0.6 + cos(time * twinkleSpeed * 1.6 + h2 * 10.0) * 0.4;
+                          twinkle = 0.15 + 0.85 * (0.5 + 0.5 * wave);
                       } else {
-                          // Space mode: stable stars (with extremely subtle physical sensor shimmer)
-                          twinkle = 0.96 + 0.04 * sin(time * 0.5 + h2 * 10.0);
+                          // Space mode: slow, elegant physical sensor shimmer to keep the space environment alive
+                          float twinkleSpeed = 1.2 + h1 * 1.8;
+                          float wave = sin(time * twinkleSpeed) * 0.7 + cos(time * twinkleSpeed * 1.4 + h2 * 8.0) * 0.3;
+                          twinkle = 0.7 + 0.3 * (0.5 + 0.5 * wave);
                       }
                       
                       // Add diffraction spikes for very bright stars
