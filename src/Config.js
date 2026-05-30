@@ -52,6 +52,14 @@ export class LensingConfig {
         OPACITY: 0.7
     };
 
+    static FLUID_SIMULATION = {
+        RESOLUTION: 256,
+        VISCOSITY: 0.992,            // Gas viscosity (density conservation/damping)
+        VORTICITY: 2.2,              // Vorticity confinement strength
+        INFLOW_STRENGTH: 0.12,       // Radial accretion inflow pull
+        TURBULENCE_FREQ: 0.015       // Spontaneous magnetic flare frequency per frame
+    };
+
     static PHYSICS = {
         DOPPLER_STRENGTH: 1.0,
         REDSHIFT_STRENGTH: 1.0,

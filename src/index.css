@@ -468,3 +468,41 @@ input:checked + .slider-switch:before {
         background-position: -200% center;
     }
 }
+
+/* Custom Select Field Styling */
+.select-field {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-panel);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.75rem;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    margin-top: 4px;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 14px;
+    padding-right: 32px;
+}
+
+.select-field:hover {
+    border-color: var(--border-panel-hover);
+}
+
+.select-field:focus {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.select-field option {
+    background: #0c0d12;
+    color: var(--text-primary);
+}

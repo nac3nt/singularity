@@ -13,6 +13,7 @@ export class RayMarchingShader {
       uniform vec3 cameraTarget;
       uniform vec3 cameraUp;
       uniform samplerCube envTexture; // HDR Environment (Cubemap)
+      uniform sampler2D fluidDensityTexture; // Dynamic GPGPU fluid simulation texture
       uniform float cameraTanHalfFov;
       
       // Black Hole Parameters
@@ -125,50 +126,39 @@ export class RayMarchingShader {
           return diskHeight * (1.0 - 0.8 * rNorm);
       }
 
-      // Volumetric 3D Accretion Disk Density using domain warping in seamless Cartesian coordinates
-      float getDiskDensity(vec3 p) {
+      // Volumetric 3D Accretion Disk Density and Color from GPGPU Fluid Simulation
+      vec4 getDiskDensityAndColor(vec3 p) {
           float r = length(p.xz);
-          if (r < diskInnerRadius || r > diskOuterRadius) return 0.0;
+          if (r < diskInnerRadius || r > diskOuterRadius) return vec4(0.0);
           
           float localHeight = getLocalDiskHeight(r);
-          if (abs(p.y) > localHeight) return 0.0;
+          if (abs(p.y) > localHeight * 2.0) return vec4(0.0);
 
-          // Differential rotation angle (Keplerian shearing: inner parts rotate faster)
-          // Optimized to avoid division and sqrt on the GPU
-          float KeplerianShear = 40.0 * sqrtDiskInnerRadius * inversesqrt(max(r, 0.0001));
-          float rotationAngle = KeplerianShear + diskTime;
+          // Map Cartesian coordinates to UV space [-diskOuterRadius, diskOuterRadius] -> [0.0, 1.0]
+          vec2 uv = p.xz / (2.0 * diskOuterRadius) + 0.5;
+          vec4 fluidSample = texture2D(fluidDensityTexture, uv);
           
-          float c = cos(rotationAngle);
-          float s = sin(rotationAngle);
-          vec2 swirledXZ = vec2(
-              c * p.x - s * p.z,
-              s * p.x + c * p.z
-          );
+          float rawDensity = length(fluidSample.rgb); // Use intensity of colors as density
+          float fluidPresence = smoothstep(0.05, 0.45, rawDensity);
+          float rNorm = clamp((r - diskInnerRadius) * invDiskWidth, 0.0, 1.0);
+          vec3 radialColor = mix(diskColorInner, diskColorOuter, pow(max(rNorm, 0.0), 0.75));
+          vec3 fluidColor = max(fluidSample.rgb, radialColor * 0.2);
+          vec3 baseColor = mix(radialColor, fluidColor, fluidPresence * 0.75);
+          baseColor *= 0.65 + rawDensity * 0.75;
 
-          // Continuous Cartesian UV mapping (no polar coordinate angle wrapping seams!)
-          vec2 uv = swirledXZ * diskNoiseScale;
-          
-          // Reduced octave complexity for coordinate warping (3 octaves instead of 5)
-          float w1 = fbm3(uv);
-          float w2 = fbm3(uv + vec2(w1, diskTime * 0.05));
-          // Final density uses 4 octaves instead of 5
-          float noiseVal = fbm4(uv + vec2(w2 * 1.5, w1 * 0.4));
-          
-          // Contrast enhancement: sharpens highlights and deepens dark gas lanes
-          noiseVal = smoothstep(0.12, 0.88, noiseVal);
-          
           // Smooth radial boundaries
-          float innerFade = smoothstep(diskInnerRadius, diskInnerRadius + 1.5, r);
+          float innerFade = smoothstep(diskInnerRadius, diskInnerRadius + 1.2, r);
           
           // Gradual outer boundary fade spanning from the peak of the inner fade to the outer edge.
-          float fadeStart = min(diskInnerRadius + 1.5, diskInnerRadius + 0.5 * (diskOuterRadius - diskInnerRadius));
+          float fadeStart = min(diskInnerRadius + 1.2, diskInnerRadius + 0.5 * (diskOuterRadius - diskInnerRadius));
           float outerFade = smoothstep(diskOuterRadius, fadeStart, r);
           
           // Gaussian vertical density profile (disk is densest in the midplane)
           float distToCenterPlane = abs(p.y) / localHeight;
-          float verticalFade = exp(-distToCenterPlane * distToCenterPlane * 2.5);
+          float verticalFade = exp(-distToCenterPlane * distToCenterPlane * 2.0);
 
-          return noiseVal * innerFade * outerFade * verticalFade * diskOpacity;
+          float density = max(rawDensity, 0.14) * innerFade * outerFade * verticalFade * diskOpacity * 4.5;
+          return vec4(baseColor, density);
       }
 
       // Doppler & Redshift Calculation
@@ -426,20 +416,19 @@ export class RayMarchingShader {
                   float diskStepSize = max(0.02, (diskHeight * 0.12) / max(abs(rd.y), 0.005));
                   stepSize = min(stepSize, diskStepSize);
                   
-                  float stepDiskDensity = getDiskDensity(p) * stepSize;
+                  vec4 diskSample = getDiskDensityAndColor(p);
+                  float grazingDamping = mix(0.55, 1.0, smoothstep(0.03, 0.18, abs(rd.y)));
+                  float stepDiskDensity = diskSample.w * stepSize * grazingDamping;
                   
                   if (stepDiskDensity > 0.0005) {
-                      // Temperature-based radial distribution approximating Novikov-Thorne temperature profile
-                      // Optimized to use CPU-precomputed invDiskWidth
-                      float t = (r - diskInnerRadius) * invDiskWidth;
-                      vec3 diskBaseColor = mix(diskColorInner, diskColorOuter, pow(max(t, 0.0), 0.75));
+                      vec3 diskBaseColor = diskSample.rgb;
                       
                       // Apply Relativistic Effects & Doppler Wavelength shifting
                       vec3 diskLensedColor = applyRelativisticEffects(diskBaseColor, p, rd);
                       
                       // Volumetric radiative transfer blend: add emission and subtract background light
-                      float alpha = clamp(stepDiskDensity, 0.0, 1.0);
-                      diskCol += diskLensedColor * stepDiskDensity * (1.0 - diskAlpha);
+                      float alpha = clamp(stepDiskDensity * 0.45, 0.0, 0.85);
+                      diskCol += diskLensedColor * stepDiskDensity * 1.2 * (1.0 - diskAlpha);
                       diskAlpha += alpha * (1.0 - diskAlpha);
                       
                       if (diskAlpha > 0.98) {
@@ -468,9 +457,9 @@ export class RayMarchingShader {
               vec3 finalSpace = bg + stars + nebula;
               
               // Attenuate background light using the accumulated volumetric absorption (diskAlpha)
-              col = finalSpace * (1.0 - diskAlpha) + diskCol * 0.35;
+              col = finalSpace * (1.0 - diskAlpha) + diskCol * 0.65;
           } else {
-              col = diskCol * 0.35;
+              col = diskCol * 0.65;
           }
 
           // Procedural film grain (very cheap, eliminates color banding in dark space)

@@ -5,6 +5,7 @@ import {
 import { LensingConfig } from '../Config.js';
 import { PerformanceMonitor } from '../utils/PerformanceMonitor.js';
 import { BlackHole } from '../components/BlackHole.js';
+import { FluidSimulation } from './FluidSimulation.js';
 
 export class SceneManager {
     constructor() {
@@ -19,6 +20,7 @@ export class SceneManager {
         this.isIdle = false;
         this.fpsCap = 60.0;
         this.lastFrameTime = performance.now();
+        this.hasRevealedScene = false;
 
         // Initialize application state with default preset (quasar / Realistic Active) values
         const defaultPreset = LensingConfig.PRESETS.quasar;
@@ -44,7 +46,12 @@ export class SceneManager {
             colorOuter: { ...defaultPreset.colorOuter },
             renderScale: 1.00,
             invertHorizontal: 1.0,
-            invertVertical: 0.0
+            invertVertical: 0.0,
+            fluidResolution: LensingConfig.FLUID_SIMULATION.RESOLUTION,
+            fluidViscosity: LensingConfig.FLUID_SIMULATION.VISCOSITY,
+            fluidVorticity: LensingConfig.FLUID_SIMULATION.VORTICITY,
+            fluidInflowStrength: LensingConfig.FLUID_SIMULATION.INFLOW_STRENGTH,
+            fluidTurbulenceFreq: LensingConfig.FLUID_SIMULATION.TURBULENCE_FREQ
         };
 
         this.fxaaPostProcess = null;
@@ -62,44 +69,47 @@ export class SceneManager {
         this.isTransitioningCamera = false;
 
         if (this.scene) {
-            this.scene.executeWhenReady(() => {
-                const loader = document.getElementById('loadingOverlay');
-                const canvas = document.getElementById('renderCanvas');
-                const ui = document.querySelector('.ui-overlay');
-
-                // Fade in the render canvas
-                if (canvas) {
-                    canvas.classList.add('ready');
-                }
-
-                // Fade the loader background to transparent, revealing the black hole behind it
-                if (loader) {
-                    loader.classList.add('bg-transparent');
-                }
-
-                // Start rendering loop immediately (shaders are compiled, so it's smooth!)
-                this.startRenderLoop();
-
-                // Slow drift in the top-down view during the 2-second showcase
-                this.isDriftingCamera = true;
-
-                // Wait 2 seconds showing the top-down black hole under the shimmering text
-                setTimeout(() => {
-                    if (loader) {
-                        loader.classList.add('fade-out');
-                    }
-                    if (ui) {
-                        ui.classList.add('ready');
-                    }
-
-                    // Stop top drift and start transition to focus on the black hole in orbit view
-                    this.isDriftingCamera = false;
-                    this.isTransitioningCamera = true;
-                }, 2000);
-            });
+            this.startRenderLoop();
         } else {
             this.startRenderLoop();
         }
+    }
+
+    tryRevealScene() {
+        if (this.hasRevealedScene || !this.scene) return;
+        if (!this.scene.isReady(true)) return;
+        if (this.fluidSimulation && this.fluidSimulation.resetRequested) return;
+
+        this.hasRevealedScene = true;
+
+        const loader = document.getElementById('loadingOverlay');
+        const canvas = document.getElementById('renderCanvas');
+        const ui = document.querySelector('.ui-overlay');
+
+        if (canvas) {
+            canvas.classList.add('ready');
+        }
+
+        if (loader) {
+            loader.classList.add('bg-transparent');
+        }
+
+        // Slow drift in the top-down view during the 2-second showcase
+        this.isDriftingCamera = true;
+
+        // Wait 2 seconds showing the top-down black hole under the shimmering text
+        setTimeout(() => {
+            if (loader) {
+                loader.classList.add('fade-out');
+            }
+            if (ui) {
+                ui.classList.add('ready');
+            }
+
+            // Stop top drift and start transition to focus on the black hole in orbit view
+            this.isDriftingCamera = false;
+            this.isTransitioningCamera = true;
+        }, 2000);
     }
 
     createScene() {
@@ -108,6 +118,9 @@ export class SceneManager {
 
         this.setupEnvironment();
         this.setupCamera();
+
+        // Instantiate dynamic fluid simulation manager
+        this.fluidSimulation = new FluidSimulation(this.scene, this.engine, this.settings);
 
         // Instantiate black hole, passing SceneManager reference for dynamic configurations
         this.blackHole = new BlackHole(this.scene, this.camera, this.engine, this);
@@ -163,7 +176,14 @@ export class SceneManager {
         this.scene.registerBeforeRender(() => {
             const deltaTime = this.engine.getDeltaTime();
             this.performanceMonitor.update();
+
+            // Tick fluid simulation
+            if (this.fluidSimulation) {
+                this.fluidSimulation.step(deltaTime * 0.001);
+            }
+
             this.blackHole.update(deltaTime);
+            this.tryRevealScene();
 
             // Update FPS display once per second if the panel is open
             const now = performance.now();
@@ -284,6 +304,23 @@ export class SceneManager {
         updateSlider('diskHeightSlider', 'diskHeightVal', 'diskHeight');
         updateSlider('diskSpeedSlider', 'diskSpeedVal', 'diskNoiseSpeed');
         updateSlider('diskOpacitySlider', 'diskOpacityVal', 'diskOpacity');
+        
+        // GPGPU Fluid Simulation Controls
+        updateSlider('viscositySlider', 'viscosityVal', 'fluidViscosity');
+        updateSlider('vorticitySlider', 'vorticityVal', 'fluidVorticity');
+        updateSlider('inflowSlider', 'inflowVal', 'fluidInflowStrength');
+
+        const fluidResSelect = document.getElementById('fluidResSelect');
+        if (fluidResSelect) {
+            fluidResSelect.value = this.settings.fluidResolution;
+            fluidResSelect.addEventListener('change', (e) => {
+                const res = parseInt(e.target.value);
+                this.settings.fluidResolution = res;
+                if (this.fluidSimulation) {
+                    this.fluidSimulation.resize(res);
+                }
+            });
+        }
         
         // Resolution Scaling (Hardware Scaling)
         const renderScaleSlider = document.getElementById('renderScaleSlider');
@@ -488,6 +525,11 @@ export class SceneManager {
         if (fxaaToggle) fxaaToggle.checked = this.settings.fxaaEnabled > 0.5;
 
         this.updatePostProcesses();
+
+        // Re-initialize the fluid simulation disk with the new preset colors and properties
+        if (this.fluidSimulation) {
+            this.fluidSimulation.initializeDisk();
+        }
     }
 
     updatePostProcesses() {
@@ -565,6 +607,10 @@ export class SceneManager {
     }
 
     dispose() {
+        if (this.fluidSimulation) {
+            this.fluidSimulation.dispose();
+            this.fluidSimulation = null;
+        }
         if (this.fxaaPostProcess) {
             this.fxaaPostProcess.dispose(this.camera);
             this.fxaaPostProcess = null;

@@ -35,7 +35,7 @@ export class BlackHole {
                 "blackHoleSpin", "atmosphereEnabled", "filmGrainEnabled",
                 "invDiskWidth", "sqrtDiskInnerRadius", "sqrtHalfRs"
             ],
-            ["envTexture"],
+            ["envTexture", "fluidDensityTexture"],
             1.0,
             this.camera
         );
@@ -122,6 +122,14 @@ export class BlackHole {
         // Performance clamping
         const maxSteps = settings ? settings.maxSteps : LensingConfig.PERFORMANCE.MAX_STEPS;
         effect.setFloat("maxSteps", maxSteps);
+
+        // Bind fluid simulation density texture
+        if (this.sceneManager && this.sceneManager.fluidSimulation) {
+            const fluidTex = this.sceneManager.fluidSimulation.getDensityTexture();
+            if (fluidTex) {
+                effect.setTexture("fluidDensityTexture", fluidTex);
+            }
+        }
     }
 
     update(deltaTime) {
